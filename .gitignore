@@ -15,3 +15,10 @@ mega-upload-test.cjs
 
 # Local backup files
 *.pre-mega.bak
+*.bak
+*.backup-*
+backup-easypaisa-*/
+add_admin_sections.py
+merge_easypaisa_*.py
+patch_easypaisa*.py
+verify_migration6.py
