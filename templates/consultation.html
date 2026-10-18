@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-intro">
+  <h1>Get free guidance from our team</h1>
+  <p>Not sure where to start? Choose a team member and tell us how you prefer to be contacted. This request is free. There is no payment step.</p>
+</section>
+{% if errors %}
+<ul class="errors" role="alert">{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul>
+{% endif %}
+{% set ready = channels | selectattr("configured") | list %}
+{% if ready %}
+<ul class="channel-list">
+  {% for channel in ready %}<li><a href="{{ channel.href }}">{{ channel.label }}</a></li>{% endfor %}
+</ul>
+{% else %}
+<p class="empty-state">WhatsApp, Telegram, email, Zoom, and Google Meet need setup before they can be offered as direct links. You can still store a request for the team.</p>
+{% endif %}
+<form class="stack-form" method="post" action="/consultation">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <input type="hidden" name="form_started" value="{{ form_started }}">
+  <input type="hidden" name="form_sig" value="{{ form_sig }}">
+  <div class="hp" aria-hidden="true">
+    <label for="company_website">Company website</label>
+    <input id="company_website" name="company_website" tabindex="-1" autocomplete="off">
+  </div>
+  <label for="name">Your name</label>
+  <input id="name" name="name" required maxlength="80" value="{{ values.name or '' }}">
+  <label for="email">Gmail address</label>
+  <input id="email" name="email" type="email" autocomplete="email" required value="{{ values.email or '' }}">
+  <label for="team_member">Team member</label>
+  <select id="team_member" name="team_member" required>
+    <option value="">Choose a team member</option>
+    {% for member in team %}
+    <option value="{{ member.slug }}" {% if selected == member.slug %}selected{% endif %}>{{ member.name }}</option>
+    {% endfor %}
+  </select>
+  <label for="contact_method">Preferred contact method</label>
+  <select id="contact_method" name="contact_method" {% if ready %}required{% endif %}>
+    {% if not ready %}<option value="unspecified" selected>No direct channel is configured yet</option>{% endif %}
+    {% for channel in channels %}
+    <option value="{{ channel.key }}" {% if not channel.configured %}disabled{% endif %} {% if values.contact_method == channel.key %}selected{% endif %}>
+      {{ channel.label }}{% if not channel.configured %} — needs setup{% endif %}
+    </option>
+    {% endfor %}
+  </select>
+  <label for="preferred_time">Preferred time, if you chose Zoom or Google Meet</label>
+  <input id="preferred_time" name="preferred_time" maxlength="120" value="{{ values.preferred_time or '' }}">
+  <label for="question">Your question</label>
+  <textarea id="question" name="question" minlength="20" maxlength="2000" required>{{ values.question or '' }}</textarea>
+  <label class="check"><input type="checkbox" name="consent" value="yes" required> I agree that Digicraft can store this request so the team can reply. Consultation is free.</label>
+  <p>Your Gmail address is used to contact you about this request. It is not shown in the chat room.</p>
+  <button class="button" type="submit">Send request</button>
+</form>
+{% endblock %}

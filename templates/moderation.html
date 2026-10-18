@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Message reports</h1>
+<p>Reports show display names only. Email addresses are not included.</p>
+{% if reports %}
+{% for report in reports %}
+<article class="info-card">
+  <h2>Report {{ report.id }}</h2>
+  <p>Reporter: {{ report.reporter }} · Author: {{ report.author }}</p>
+  <p>{{ report.reason }}</p>
+  <blockquote>{{ report.body }}</blockquote>
+  <time datetime="{{ report.created_at }}">{{ report.created_at }}</time>
+</article>
+{% endfor %}
+{% else %}
+<p class="empty-state">No reports have been submitted.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Contact Us</h1>
+<p>Last updated: October 2026</p>
+<p>The consultation form is the contact method that is available now. Choose Abdul Raof or Naila M Ali and send your question. There is no fee.</p>
+<a class="button" href="/consultation">Talk to Our Team</a>
+<h2>Direct channels</h2>
+{% set ready = channels | selectattr("configured") | list %}
+{% if ready %}
+<ul>{% for channel in ready %}<li><a href="{{ channel.href }}">{{ channel.label }}</a></li>{% endfor %}</ul>
+{% else %}
+<p>WhatsApp, Telegram, email, Zoom, and Google Meet are not configured, so this page does not invent addresses or phone numbers for the team.</p>
+{% endif %}
+<ul>
+  {% for member in team %}
+  <li><a href="/consultation?member={{ member.slug }}">Contact {{ member.name }}</a></li>
+  {% endfor %}
+</ul>
+<p>Verified members can also ask questions in a lesson discussion or the chat room.</p>
+{% endblock %}

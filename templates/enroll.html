@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Get started with {{ plan.name }}</h1>
+<p>{{ plan.blurb }}</p>
+<p class="price">PKR {{ "{:,}".format(plan.price) }} <s>PKR {{ "{:,}".format(plan.original) }}</s></p>
+<p class="mono-label">{{ plan.billing }} · {{ plan.discount }}</p>
+<dl class="plan-scope">
+  <div><dt>Access</dt><dd>{{ plan.access }}</dd></div>
+  <div><dt>Support</dt><dd>{{ plan.support }}</dd></div>
+</dl>
+<ul>{% for feature in plan.features %}<li>{{ feature }}</li>{% endfor %}</ul>
+{% if missing_payment %}
+<p>Stripe is not fully configured. Saving this request does not charge you and does not mark the plan as paid. Set both <code>STRIPE_SECRET_KEY</code> and <code>STRIPE_WEBHOOK_SECRET</code> before checkout can start. The webhook URL is <code>{{ request.base_url }}payments/stripe/webhook</code>.</p>
+{% else %}
+<p>You will continue to Stripe. The plan becomes active only after Stripe sends a verified payment webhook.</p>
+{% endif %}
+<form method="post" action="/enroll">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <input type="hidden" name="plan" value="{{ plan.slug }}">
+  <button class="button" type="submit">{% if missing_payment %}Save plan request{% else %}Continue to Stripe checkout{% endif %}</button>
+</form>
+{% endblock %}

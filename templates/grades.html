@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Your grades</h1>
+<p>These are your own assignments, marks, and feedback.</p>
+{% if assignments %}
+{% for item in assignments %}
+<article class="info-card">
+  <h2>{{ item.title }}</h2>
+  <p>{{ item.course_title }}. Due {{ item.deadline or "no deadline" }}. Accepted files: {{ item.formats }}. Scale: {{ item.max_points }} points.</p>
+  <p>{{ item.instructions }}</p>
+  {% if item.submission_id %}
+  <p>Status {{ item.submission_status }}. {% if item.late %}Submitted late.{% else %}Submitted on time.{% endif %}</p>
+  <p>{% if item.grade is not none %}Mark {{ item.grade }} / {{ item.max_points }}.{% else %}No mark is saved yet.{% endif %}</p>
+  <p>{{ item.feedback or "No feedback is saved yet." }}</p>
+  {% else %}<p>Not submitted yet.</p>{% endif %}
+  <form method="post" action="/assignments/{{ item.id }}/submit" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label for="file-{{ item.id }}">Your file</label>
+    <input id="file-{{ item.id }}" name="submission" type="file" required>
+    <button class="button" type="submit">Submit</button>
+  </form>
+</article>
+{% endfor %}
+{% else %}
+<p>No published assignments are open for your enrollments.</p>
+{% endif %}
+<p><a href="/account">Back to your account</a></p>
+{% endblock %}

@@ -1,0 +1,7 @@
+.venv/
+.env
+data/
+__pycache__/
+.pytest_cache/
+*.pyc
+_backup_pre_theme_20261015/

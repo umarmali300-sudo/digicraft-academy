@@ -1,0 +1,29 @@
+<form class="filters" method="get" action="{{ filter_action|default('/#courses') }}">
+  <div class="field">
+    <label for="course-q">Search courses</label>
+    <input id="course-q" name="q" value="{{ query }}" type="search" placeholder="Title or description">
+  </div>
+  {% if categories %}
+  <div class="field">
+    <label for="course-category">Category</label>
+    <select id="course-category" name="category">
+      <option value="">All categories</option>
+      {% for item in categories %}
+      <option value="{{ item }}" {% if item == category %}selected{% endif %}>{{ item }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  {% endif %}
+  {% if levels %}
+  <div class="field">
+    <label for="course-level">Level</label>
+    <select id="course-level" name="level">
+      <option value="">All levels</option>
+      {% for item in levels %}
+      <option value="{{ item }}" {% if item == level %}selected{% endif %}>{{ item }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  {% endif %}
+  <button class="button" type="submit">Apply</button>
+</form>

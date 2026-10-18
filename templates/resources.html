@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Learning resources</h1>
+<p>Free step-by-step guides. No account is needed to read them.</p>
+{% if category %}<p>Category: {{ category }}</p>{% endif %}
+{% if articles %}
+<div class="card-grid">
+  {% for article in articles %}
+  <article class="resource-card">
+    <a href="/resources/{{ article.slug }}"><img src="/static/images/{{ article.image }}" alt="{{ article.image_alt }}" width="640" height="400"></a>
+    <h2><a href="/resources/{{ article.slug }}">{{ article.title }}</a></h2>
+    <p>{{ article.summary }}</p>
+    <time datetime="{{ article.published_on }}">{{ article.published_label }}</time>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<p class="empty-state">No published guides match that category.</p>
+{% endif %}
+{% endblock %}

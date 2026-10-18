@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="eyebrow"><a href="/courses/{{ course.slug }}">{{ course.title }}</a></p>
+<h1>{{ lesson.title }}</h1>
+<p>{{ lesson.summary }}</p>
+{% if not active %}
+<p class="empty-state">Lesson materials, files, and discussion are available after you enroll with an active plan. <a href="/courses/{{ course.slug }}">Back to the course</a></p>
+{% else %}
+{% if embed %}
+<div class="video"><iframe src="{{ embed }}" title="Lesson video: {{ lesson.title }}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>
+{% endif %}
+<div class="lesson-body">{{ lesson.body }}</div>
+{% if lesson.notes %}<section><h2>Notes</h2><p>{{ lesson.notes }}</p></section>{% endif %}
+{% if files %}
+<h2>Downloads</h2>
+<ul>
+  {% for file in files %}
+  <li><a href="/courses/{{ course.slug }}/lessons/{{ lesson.slug }}/files/{{ file.id }}">{{ file.original_name }} ({{ file.kind }})</a></li>
+  {% endfor %}
+</ul>
+{% endif %}
+<form method="post" action="/courses/{{ course.slug }}/lessons/{{ lesson.slug }}/progress">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <input type="hidden" name="completed" value="{{ 0 if completed else 1 }}">
+  <button class="button" type="submit">{% if completed %}Mark as not complete{% else %}Mark lesson complete{% endif %}</button>
+</form>
+<nav class="lesson-nav" aria-label="Lesson">
+  {% if previous %}<a href="/courses/{{ course.slug }}/lessons/{{ previous.slug }}">Previous: {{ previous.title }}</a>{% endif %}
+  {% if nxt %}<a href="/courses/{{ course.slug }}/lessons/{{ nxt.slug }}">Next: {{ nxt.title }}</a>{% endif %}
+</nav>
+<section>
+  <h2>Discussion</h2>
+  {% if comments %}
+  {% for comment in comments %}
+  <article class="chat-message"><h3>{{ comment.display_name }}</h3><time datetime="{{ comment.created_at }}">{{ comment.created_at }}</time><p>{{ comment.body }}</p></article>
+  {% endfor %}
+  {% else %}
+  <p class="empty-state">No questions yet. Start the discussion.</p>
+  {% endif %}
+  <form method="post" action="/courses/{{ course.slug }}/lessons/{{ lesson.slug }}/comments">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label for="comment">Your question</label>
+    <textarea id="comment" name="body" maxlength="1000" required></textarea>
+    <button class="button" type="submit">Post question</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

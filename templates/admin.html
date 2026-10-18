@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Admin dashboard</h1>
+<nav class="admin-nav" aria-label="Admin">
+  <a href="/admin" {% if section == "overview" %}aria-current="page"{% endif %}>Overview</a>
+  <a href="/admin/students" {% if section == "students" or section == "student" %}aria-current="page"{% endif %}>Students</a>
+  <a href="/admin/courses" {% if section == "courses" %}aria-current="page"{% endif %}>Courses</a>
+  <a href="/admin/assignments" {% if section == "assignments" %}aria-current="page"{% endif %}>Assignments</a>
+  <a href="/admin/submissions" {% if section == "submissions" %}aria-current="page"{% endif %}>Submissions and Grading</a>
+  <a href="/admin/chat" {% if section == "chat" %}aria-current="page"{% endif %}>Chat Moderation</a>
+  <a href="/admin/announcements" {% if section == "announcements" %}aria-current="page"{% endif %}>Announcements</a>
+  <a href="/admin/reports" {% if section == "reports" %}aria-current="page"{% endif %}>Reports</a>
+  <a href="/admin/settings" {% if section == "settings" %}aria-current="page"{% endif %}>Settings</a>
+</nav>
+
+{% if section == "overview" %}
+<div class="stat-grid">
+  <article class="info-card"><p>Registered students</p><strong>{{ stats.students }}</strong></article>
+  <article class="info-card"><p>Active students</p><strong>{{ stats.active_students }}</strong></article>
+  <article class="info-card"><p>Courses</p><strong>{{ stats.courses }}</strong></article>
+  <article class="info-card"><p>Lessons</p><strong>{{ stats.lessons }}</strong></article>
+  <article class="info-card"><p>Awaiting review</p><strong>{{ stats.awaiting_review }}</strong></article>
+  <article class="info-card"><p>Reviewed submissions</p><strong>{{ stats.reviewed_submissions }}</strong></article>
+</div>
+<h2>Recent student activity</h2>
+{% if stats.recent %}
+<ul class="rule-list">{% for item in stats.recent %}<li>{{ item.display_name }} — {{ item.label }} — {{ item.at }}</li>{% endfor %}</ul>
+{% else %}<p>No lesson or chat activity is stored yet.</p>{% endif %}
+<h2>Students who may need help</h2>
+{% if stats.needs_help %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Student</th><th>Courses under 50%</th><th>Overdue assignments</th></tr></thead>
+  <tbody>{% for item in stats.needs_help %}<tr><td><a href="/admin/students/{{ item.id }}">{{ item.display_name }}</a></td><td>{{ item.low_courses }}</td><td>{{ item.overdue }}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% else %}<p>No enrolled student is below 50% progress or missing overdue work.</p>{% endif %}
+{% endif %}
+
+{% if section == "students" %}
+<form class="stack-form" method="get" action="/admin/students">
+  <label for="q">Search name, email, or student ID</label>
+  <input id="q" name="q" value="{{ query }}">
+  <label for="sort">Sort</label>
+  <select id="sort" name="sort">
+    <option value="name" {% if sort == "name" %}selected{% endif %}>Name</option>
+    <option value="newest" {% if sort == "newest" %}selected{% endif %}>Newest</option>
+    <option value="activity" {% if sort == "activity" %}selected{% endif %}>Last activity</option>
+  </select>
+  <button class="button" type="submit">Search</button>
+</form>
+{% if students %}
+<div class="table-wrap"><table>
+  <thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Status</th><th>Created</th><th>Last activity</th></tr></thead>
+  <tbody>{% for item in students %}<tr>
+    <td>{{ item.id }}</td>
+    <td><a href="/admin/students/{{ item.id }}">{{ item.display_name }}</a></td>
+    <td>{{ item.email }}</td>
+    <td>{{ item.status }}</td>
+    <td>{{ item.created_at }}</td>
+    <td>{{ item.activity }}</td>
+  </tr>{% endfor %}</tbody>
+</table></div>
+{% else %}<p>No students match that search.</p>{% endif %}
+{% endif %}
+
+{% if section == "student" %}
+<p><a href="/admin/students">Back to students</a></p>
+<h2>{{ profile.display_name }}</h2>
+<p>Student ID {{ profile.id }}. Email {{ profile.email }}. Status {{ profile.status }}.</p>
+<p>Account created {{ profile.created_at }}. Record updated {{ profile.updated_at }}.</p>
+<p>{% if profile.email_verified %}Email verified.{% else %}Email not verified.{% endif %} {% if profile.plan %}Plan {{ profile.plan }}.{% else %}No paid plan.{% endif %}</p>
+<form method="post" action="/admin/students/{{ profile.id }}/status" class="stack-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <label for="status">Account status</label>
+  <select id="status" name="status">
+    <option value="active" {% if profile.status == "active" %}selected{% endif %}>Active</option>
+    <option value="suspended" {% if profile.status == "suspended" %}selected{% endif %}>Suspended</option>
+  </select>
+  <label><input type="checkbox" name="confirm" value="yes" required> I confirm this status change.</label>
+  <button class="button" type="submit">Save status</button>
+</form>
+<h2>Enrollment and progress</h2>
+{% if profile.learning %}
+{% for course in profile.learning %}
+<article class="info-card">
+  <h3>{{ course.title }}</h3>
+  <p>{{ course.completed }} of {{ course.total }} lessons complete ({{ course.percent }}%). Enrollment {{ course.status_label }}.</p>
+</article>
+{% endfor %}
+{% else %}<p>This student has no published-course enrollment.</p>{% endif %}
+<h2>Recent learning activity</h2>
+{% if profile.activity %}<ul class="rule-list">{% for item in profile.activity %}<li>{{ item.label }} — {{ item.at }}</li>{% endfor %}</ul>{% else %}<p>No lesson activity is stored.</p>{% endif %}
+<h2>Submissions</h2>
+{% if profile.submissions %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Assignment</th><th>Status</th><th>Mark</th><th>Feedback</th><th>Late</th></tr></thead>
+  <tbody>{% for item in profile.submissions %}<tr>
+    <td>{{ item.title }}</td><td>{{ item.status }}</td><td>{% if item.grade is not none %}{{ item.grade }}/{{ item.max_points }}{% else %}—{% endif %}</td><td>{{ item.feedback or "—" }}</td><td>{% if item.late %}Late{% else %}On time{% endif %}</td>
+  </tr>{% endfor %}</tbody>
+</table></div>
+{% else %}<p>No submissions are stored for this student.</p>{% endif %}
+<p>Attendance is not recorded by this academy, so it is not shown here.</p>
+{% endif %}
+
+{% if section == "courses" %}
+<form class="stack-form" method="post" action="/admin/courses">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <h2>Create a course</h2>
+  <label for="title">Title</label><input id="title" name="title" required maxlength="80">
+  <label for="summary">Summary</label><textarea id="summary" name="summary" required minlength="10" maxlength="400"></textarea>
+  <label for="level">Level</label>
+  <select id="level" name="level"><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select>
+  <label for="category">Category</label><input id="category" name="category" required maxlength="40">
+  <label for="plan_required">Plan required</label>
+  <select id="plan_required" name="plan_required"><option value="starter">starter</option><option value="pro">pro</option><option value="premium">premium</option></select>
+  <label for="status">Visibility</label>
+  <select id="status" name="status"><option value="draft">draft</option><option value="published">published</option></select>
+  <button class="button" type="submit">Save course</button>
+</form>
+{% if courses %}
+{% for course in courses %}
+<article class="info-card">
+  <h3>{{ course.title }}</h3>
+  <p>{{ course.summary }}</p>
+  <p>{{ course.level }} · {{ course.category }} · {{ course.plan_required }} · {{ course.status }}</p>
+  <form method="post" action="/admin/courses/{{ course.id }}/status">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="status" value="{% if course.status == 'published' %}draft{% else %}published{% endif %}">
+    <button class="button button-secondary" type="submit">{% if course.status == 'published' %}Unpublish{% else %}Publish{% endif %}</button>
+  </form>
+  <form class="stack-form" method="post" action="/admin/courses/{{ course.id }}/lessons">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label>Lesson title<input name="title" required maxlength="80"></label>
+    <label>Summary<textarea name="summary" required minlength="10" maxlength="400"></textarea></label>
+    <label>Lesson text<textarea name="body" required minlength="20" maxlength="8000"></textarea></label>
+    <button class="button" type="submit">Add lesson</button>
+  </form>
+  <form class="stack-form" method="post" action="/admin/courses/{{ course.id }}/enroll">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label>Student ID<input name="user_id" inputmode="numeric" required></label>
+    <label>Enrollment<select name="enrollment"><option value="active">Enroll</option><option value="withdrawn">Unenroll</option></select></label>
+    <button class="button button-secondary" type="submit">Save enrollment</button>
+  </form>
+</article>
+{% endfor %}
+{% else %}<p>No courses are stored yet. Existing published courses stay in place when you add new ones.</p>{% endif %}
+<h2>Lessons</h2>
+{% if lessons %}<ul class="rule-list">{% for lesson in lessons %}<li>{{ lesson.course_title }} — {{ lesson.title }}</li>{% endfor %}</ul>{% else %}<p>No lessons are stored yet.</p>{% endif %}
+{% endif %}
+
+{% if section == "assignments" %}
+<form class="stack-form" method="post" action="/admin/assignments">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <label for="course_id">Course</label>
+  <select id="course_id" name="course_id" required>
+    {% for course in courses %}<option value="{{ course.id }}">{{ course.title }}</option>{% endfor %}
+  </select>
+  <label for="lesson_id">Lesson, if this work belongs to one</label>
+  <select id="lesson_id" name="lesson_id"><option value="">Course assignment</option>{% for lesson in lessons %}<option value="{{ lesson.id }}">{{ lesson.title }}</option>{% endfor %}</select>
+  <label for="assignment_title">Title</label><input id="assignment_title" name="title" required maxlength="80">
+  <label for="instructions">Instructions</label><textarea id="instructions" name="instructions" required minlength="10"></textarea>
+  <label for="deadline">Deadline</label><input id="deadline" name="deadline" type="datetime-local">
+  <label for="formats">Permitted formats</label><input id="formats" name="formats" value="pdf,txt,png,jpg,docx,zip" required>
+  <label for="max_points">Grading scale, maximum points</label><input id="max_points" name="max_points" type="number" min="1" max="100" value="100" required>
+  <button class="button" type="submit">Save assignment</button>
+</form>
+{% if not courses %}<p>Create a course before adding an assignment.</p>{% endif %}
+{% if assignments %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Title</th><th>Course</th><th>Deadline</th><th>Formats</th><th>Scale</th><th>Submissions</th></tr></thead>
+  <tbody>{% for item in assignments %}<tr>
+    <td>{{ item.title }}</td><td>{{ item.course_title }}</td><td>{{ item.deadline or "No deadline" }}</td><td>{{ item.formats }}</td><td>{{ item.max_points }}</td><td>{{ item.submissions }}</td>
+  </tr>{% endfor %}</tbody>
+</table></div>
+{% else %}<p>No assignments are stored yet.</p>{% endif %}
+<p>Marks are entered by an admin after review. Automatic grading is not used.</p>
+{% endif %}
+
+{% if section == "submissions" %}
+{% if submissions %}
+{% for item in submissions %}
+<article class="info-card">
+  <h3>{{ item.assignment_title }}</h3>
+  <p>{{ item.display_name }} submitted {{ item.original_name }} at {{ item.submitted_at }}. Status {{ item.status }}. {% if item.late %}Late.{% else %}On time.{% endif %}</p>
+  <p><a href="/admin/submissions/{{ item.id }}/file">Download submission</a></p>
+  <form class="stack-form" method="post" action="/admin/submissions/{{ item.id }}/review">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label>Status
+      <select name="status">
+        <option value="pending" {% if item.status == "pending" %}selected{% endif %}>pending</option>
+        <option value="reviewed" {% if item.status == "reviewed" %}selected{% endif %}>reviewed</option>
+        <option value="resubmit" {% if item.status == "resubmit" %}selected{% endif %}>resubmit</option>
+      </select>
+    </label>
+    <label>Mark from 0 to {{ item.max_points }}<input name="grade" type="number" min="0" max="{{ item.max_points }}" value="{{ item.grade if item.grade is not none else '' }}"></label>
+    <label>Feedback<textarea name="feedback" required maxlength="2000">{{ item.feedback or "" }}</textarea></label>
+    <button class="button" type="submit">Save review</button>
+  </form>
+</article>
+{% endfor %}
+{% else %}<p>No submissions are waiting. Completed and missing work appear in Reports.</p>{% endif %}
+{% endif %}
+
+{% if section == "chat" %}
+<p>This page moderates the shared academy chat. Private one-to-one messages are not part of this site, so none are shown.</p>
+{% if messages %}
+{% for item in messages %}
+<article class="info-card">
+  <p><strong>{{ item.display_name }}</strong> · {{ item.created_at }} · reports {{ item.reports }}</p>
+  <p>{{ item.body }}</p>
+  {% if item.removed_at %}<p>Removed {{ item.removed_at }}.</p>
+  {% else %}
+  <form method="post" action="/admin/chat/{{ item.id }}/remove">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label><input type="checkbox" name="confirm" value="yes" required> I confirm this message should be removed.</label>
+    <button class="button button-secondary" type="submit">Remove message</button>
+  </form>
+  {% endif %}
+</article>
+{% endfor %}
+{% else %}<p>No chat messages are stored.</p>{% endif %}
+<h2>Student support requests</h2>
+{% if requests %}
+<ul class="rule-list">{% for item in requests %}<li>#{{ item.id }} {{ item.name }} — {{ item.question }} — {{ item.created_at }}</li>{% endfor %}</ul>
+{% else %}<p>No consultation requests are stored.</p>{% endif %}
+{% endif %}
+
+{% if section == "announcements" %}
+<form class="stack-form" method="post" action="/admin/announcements">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <label for="announcement_title">Title</label><input id="announcement_title" name="title" required maxlength="80">
+  <label for="announcement_body">Message</label><textarea id="announcement_body" name="body" required minlength="10" maxlength="2000"></textarea>
+  <button class="button" type="submit">Save announcement</button>
+</form>
+{% if announcements %}
+{% for item in announcements %}<article class="info-card"><h3>{{ item.title }}</h3><p>{{ item.body }}</p><p class="meta">Saved {{ item.created_at }}</p></article>{% endfor %}
+{% else %}<p>No announcements are saved. Students see an announcement only after it is stored.</p>{% endif %}
+{% endif %}
+
+{% if section == "reports" %}
+<p><a class="button" href="/admin/reports.csv">Export course progress CSV</a></p>
+<h2>Progress by course</h2>
+{% if progress %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Course</th><th>Student</th><th>Completed</th><th>Lessons</th></tr></thead>
+  <tbody>{% for row in progress %}<tr><td>{{ row.course }}</td><td>{{ row.student }}</td><td>{{ row.completed }}</td><td>{{ row.lessons }}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% else %}<p>No active enrollments are stored.</p>{% endif %}
+<h2>Overdue work</h2>
+{% if overdue %}
+<ul class="rule-list">{% for row in overdue %}<li>{{ row.display_name }} — {{ row.title }} — due {{ row.deadline }}</li>{% endfor %}</ul>
+{% else %}<p>No overdue missing submissions are stored.</p>{% endif %}
+<h2>Grades</h2>
+{% if grades %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Student</th><th>Assignment</th><th>Status</th><th>Mark</th></tr></thead>
+  <tbody>{% for row in grades %}<tr><td>{{ row.display_name }}</td><td>{{ row.assignment_title }}</td><td>{{ row.status }}</td><td>{% if row.grade is not none %}{{ row.grade }}/{{ row.max_points }}{% else %}—{% endif %}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% else %}<p>No grades are stored.</p>{% endif %}
+<h2>Enrollment</h2>
+{% if enrollment %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Course</th><th>Visibility</th><th>Enrolled</th></tr></thead>
+  <tbody>{% for row in enrollment %}<tr><td>{{ row.title }}</td><td>{{ row.status }}</td><td>{{ row.enrolled }}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% else %}<p>No courses are stored.</p>{% endif %}
+<h2>Activity over time</h2>
+{% if activity %}
+{% set peak = activity|map(attribute='events')|max %}
+<ul class="activity-bars">{% for row in activity %}<li><span>{{ row.day }}</span><span class="activity-meter" style="width: {{ (100 * row.events / peak)|round }}%"></span><span>{{ row.events }}</span></li>{% endfor %}</ul>
+{% else %}<p>No dated lesson or chat activity is stored.</p>{% endif %}
+{% endif %}
+
+{% if section == "settings" %}
+<p>Admin access is granted only when the signed-in account email is listed in the server environment variable <code>NEXORA_ADMIN_EMAILS</code>. {{ admin_count }} email{% if admin_count != 1 %}s are{% else %} is{% endif %} configured.</p>
+<p>There is no public admin signup. A student cannot become an admin by editing a profile, browser storage, a URL, or an API request.</p>
+<p>Set the variable to one or more verified Gmail addresses, separated by commas, then restart the site. Do not put the password in the variable or in frontend code.</p>
+{% endif %}
+{% endblock %}

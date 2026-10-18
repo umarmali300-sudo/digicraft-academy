@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+<article class="page-intro">
+  <p class="eyebrow">{{ course.level }} · {{ course.category }}</p>
+  <h1>{{ course.title }}</h1>
+  <p>{{ course.summary }}</p>
+  <p>Requires the {{ plan.name }} plan. Availability: published.</p>
+  {% if active %}
+  <p class="progress-label"><span>{{ completed }} of {{ total }} lessons</span><span>{{ percent }}% complete</span></p>
+  <div class="bar" role="img" aria-label="{{ percent }} percent complete"><span style="width: {{ percent }}%"></span></div>
+  {% if next_lesson %}
+  <a class="button" href="/courses/{{ course.slug }}/lessons/{{ next_lesson.slug }}">Continue learning</a>
+  {% elif total %}
+  <p>You have marked every lesson in this course complete.</p>
+  {% endif %}
+  {% elif allowed %}
+  <form method="post" action="/courses/{{ course.slug }}/enroll">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <button class="button" type="submit">Enroll with your plan</button>
+  </form>
+  {% elif user %}
+  <a class="button" href="/enroll?plan={{ course.plan_required }}">Get Started with {{ plan.name }}</a>
+  {% else %}
+  <a class="button" href="/login?next=/courses/{{ course.slug }}">Log in to enroll</a>
+  {% endif %}
+</article>
+<h2>Lessons</h2>
+{% if lessons %}
+<ol class="lesson-list">
+  {% for lesson in lessons %}
+  <li><a href="/courses/{{ course.slug }}/lessons/{{ lesson.slug }}">{{ lesson.position }}. {{ lesson.title }}</a><p>{{ lesson.summary }}</p></li>
+  {% endfor %}
+</ol>
+{% else %}
+<p class="empty-state">Lessons for this course have not been published yet.</p>
+{% endif %}
+{% endblock %}

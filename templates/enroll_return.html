@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ plan.name }} plan</h1>
+<p>Status: {{ order.status|replace("_", " ") }}.</p>
+<p>Amount recorded: PKR {{ "{:,}".format(order.amount_pkr) }}. One time.</p>
+{% if order.status == "paid" %}
+<p>Stripe confirmed this payment. The plan is now active on your account.</p>
+{% else %}
+<p>No payment has been confirmed. Returning to this page does not mark an order as paid.</p>
+{% endif %}
+<a class="button" href="/account">View your account</a>
+{% endblock %}

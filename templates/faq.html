@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-intro">
+  <h1>FAQ</h1>
+  <p>The same answers as the homepage. They describe the academy as it works today.</p>
+</section>
+{% for question, answer in faqs %}
+<details class="faq"><summary>{{ question }}</summary><p>{{ answer }}</p></details>
+{% endfor %}
+<section class="closing">
+  <h2>Still have a question?</h2>
+  <p>Our team is happy to help you personally, free of charge.</p>
+  <a class="button" href="/consultation">Talk to Our Team</a>
+</section>
+{% endblock %}

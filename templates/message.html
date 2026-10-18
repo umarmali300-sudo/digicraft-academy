@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block body %}
+<main id="content" class="auth-layout">
+  <section class="auth-panel">
+    {% include "partials/logo.html" %}
+    <h1>{{ heading }}</h1>
+    <p>{{ text }}</p>
+    <div class="actions">
+      <a class="button" href="/">Home</a>
+      <a class="button button-secondary" href="/login">Log in</a>
+    </div>
+  </section>
+</main>
+{% endblock %}

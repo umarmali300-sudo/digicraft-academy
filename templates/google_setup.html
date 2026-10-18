@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block body %}
+<main id="content" class="auth-layout">
+  <section class="auth-panel">
+    {% include "partials/logo.html" %}
+    <h1>Google sign-in needs configuration</h1>
+    <p>The button started the Google sign-in flow, but OAuth credentials are not configured. No account was created and no Google password was requested.</p>
+    <p>Set these environment variables, then restart the app:</p>
+    <ul>
+      <li><code>GOOGLE_CLIENT_ID</code></li>
+      <li><code>GOOGLE_CLIENT_SECRET</code></li>
+      <li><code>GOOGLE_REDIRECT_URI</code> = <code>{{ redirect_uri }}</code></li>
+    </ul>
+    <p>In Google Cloud, add that exact redirect URI to an OAuth web client and enable the Google People or userinfo scopes for email and profile.</p>
+    <a class="button" href="/login">Use a Digicraft password instead</a>
+  </section>
+</main>
+{% endblock %}

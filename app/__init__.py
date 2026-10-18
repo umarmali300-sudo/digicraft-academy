@@ -1,0 +1,1 @@
+"""Digicraft web application."""

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<article class="article">
+  <p class="eyebrow"><a href="/resources">Learning resources</a> / <a href="/resources?category={{ article.category }}">{{ article.category }}</a></p>
+  <h1>{{ article.title }}</h1>
+  <p>By {{ article.author }} · Published {{ article.published_label }}{% if article.updated_label %} · Updated {{ article.updated_label }}{% endif %}</p>
+  <img src="/static/images/{{ article.image }}" alt="{{ article.image_alt }}" width="1200" height="750">
+  <p><strong>Summary.</strong> {{ article.summary }}</p>
+  <div class="article-body">{{ article.body_html | safe }}</div>
+  <p>Educational information only. Rankings, clients, and income are not guaranteed.</p>
+</article>
+{% if related %}
+<section>
+  <h2>Related articles</h2>
+  <div class="card-grid">
+    {% for item in related %}
+    <article class="info-card">
+      <h3><a href="/resources/{{ item.slug }}">{{ item.title }}</a></h3>
+      <p>{{ item.summary }}</p>
+      <time datetime="{{ item.published_on }}">{{ item.published_label }}</time>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

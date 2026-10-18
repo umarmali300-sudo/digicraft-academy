@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% from "partials/course_card.html" import course_card %}
+{% block content %}
+<section class="page-intro">
+  <p class="mono-label">Catalog</p>
+  <h1>Courses</h1>
+  <p>Only published courses are listed. Search and filters use the same course records as the homepage.</p>
+</section>
+{% if continue_row %}
+<p class="flash">Continue {{ continue_row.course_title }}: <a href="/courses/{{ continue_row.course_slug }}/lessons/{{ continue_row.lesson_slug }}">{{ continue_row.lesson_title }}</a></p>
+{% endif %}
+{% include "partials/course_filters.html" %}
+{% if has_courses %}
+{% if courses %}
+<p class="mono-label result-count">{{ courses|length }} shown</p>
+<div class="bento">
+  {% for course in courses %}
+  {{ course_card(course, loop.first, loop.index == 2 and courses|length > 2) }}
+  {% endfor %}
+</div>
+{% else %}
+<p class="empty-state">No published courses match that search.</p>
+{% endif %}
+{% else %}
+<p class="empty-state">New courses are being prepared. Check back soon.</p>
+{% endif %}
+{% endblock %}

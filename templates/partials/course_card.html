@@ -1,0 +1,26 @@
+{% macro course_card(course, featured=false, tall=false) %}
+<article class="course-card glass {% if featured %}is-featured{% elif tall %}is-tall{% endif %}">
+  <p class="mono-label">{{ course.category }} · {{ course.level }}</p>
+  <h3><a href="/courses/{{ course.slug }}">{{ course.title }}</a></h3>
+  <p>{{ course.summary }}</p>
+  <dl class="course-meta">
+    <div>
+      <dt>Lessons</dt>
+      <dd>{% if course.lesson_count %}{{ course.lesson_count }} published{% else %}None published yet{% endif %}</dd>
+    </div>
+    {% if course.duration %}
+    <div>
+      <dt>Duration</dt>
+      <dd>{{ course.duration }}</dd>
+    </div>
+    {% endif %}
+    {% if course.price is not none %}
+    <div>
+      <dt>Plan price</dt>
+      <dd>PKR {{ "{:,}".format(course.price) }} · {{ course.plan_name }}</dd>
+    </div>
+    {% endif %}
+  </dl>
+  <a class="button button-small" href="/courses/{{ course.slug }}">View course</a>
+</article>
+{% endmacro %}

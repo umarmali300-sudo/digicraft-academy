@@ -1,0 +1,44 @@
+<footer class="site-footer">
+  <div class="footer-top">
+    {% include "partials/logo.html" %}
+    <a class="neon-button" href="/#courses">Explore Courses</a>
+  </div>
+  <p class="watermark" aria-hidden="true">Digicraft</p>
+  <div class="footer-grid">
+    <nav aria-label="Footer">
+      <h2>Explore</h2>
+      <ul>
+        <li><a href="/#home">Home</a></li>
+        <li><a href="/#courses">Courses</a></li>
+        <li><a href="/#pricing">Pricing</a></li>
+        <li><a href="/#about">About Us</a></li>
+        <li><a href="/#faq">FAQ</a></li>
+        <li><a href="/#chatroom">Chatroom</a></li>
+      </ul>
+    </nav>
+    <div>
+      <h2>Connect</h2>
+      {% set ready = channels | selectattr("configured") | list %}
+      {% if ready %}
+      <ul>
+        {% for channel in ready %}
+        <li><a href="{{ channel.href }}">{{ channel.label }}</a></li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p>No public social or direct-message profiles are configured.</p>
+      {% endif %}
+    </div>
+    <div>
+      <h2>Copyright</h2>
+      <p class="copyright">© 2026 Digicraft.</p>
+      <p>Educational information and guidance. Income and results are not guaranteed.</p>
+      <ul class="footer-legal">
+        <li><a href="/privacy">Privacy Policy</a></li>
+        <li><a href="/terms">Terms</a></li>
+        <li><a href="/disclaimer">Disclaimer</a></li>
+        <li><a href="/contact">Contact</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Your account</h1>
+<p>Signed in as {{ user.email }}. This address is visible only to you.</p>
+<p>{% if user.email_verified %}Email verified.{% else %}Email not verified. Member features stay locked until you open the verification link.{% endif %}</p>
+{% if user.plan %}<p>Active plan: {{ user.plan }}.</p>{% else %}<p>No paid plan is active. A plan request does not grant access until payment is confirmed.</p>{% endif %}
+{% if errors %}<ul class="errors" role="alert">{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul>{% endif %}
+{% if not user.email_verified %}
+<form method="post" action="/resend-verification">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <button class="button" type="submit">Resend verification</button>
+</form>
+{% endif %}
+<form class="stack-form" method="post" action="/account">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <label for="display_name">Display name</label>
+  <input id="display_name" name="display_name" required maxlength="40" value="{{ user.display_name }}">
+  <button class="button" type="submit">Save profile</button>
+</form>
+<form class="stack-form" method="post" action="/account/avatar" enctype="multipart/form-data">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <label for="avatar">Profile photo</label>
+  <input id="avatar" name="avatar" type="file" accept="image/png,image/jpeg,image/webp">
+  <button class="button button-secondary" type="submit">Upload photo</button>
+</form>
+{% if user.avatar_path %}
+<form method="post" action="/account/avatar/remove">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <button class="button button-ghost" type="submit">Remove photo</button>
+</form>
+{% endif %}
+<p><a href="/account/grades">Your grades and assignment feedback</a></p>
+<h2>Your learning</h2>
+{% if learning %}
+<div class="card-grid">
+  {% for course in learning %}
+  <article class="info-card">
+    <p class="eyebrow">{{ course.status_label }}</p>
+    <h3><a href="/courses/{{ course.slug }}">{{ course.title }}</a></h3>
+    <p>{{ course.summary }}</p>
+    <p class="progress-label"><span>{{ course.completed }} of {{ course.total }} lessons</span><span>{{ course.percent }}% complete</span></p>
+    <div class="bar" role="img" aria-label="{{ course.percent }} percent complete"><span style="width: {{ course.percent }}%"></span></div>
+    {% if course.resume_slug %}
+    <a class="button button-small" href="/courses/{{ course.slug }}/lessons/{{ course.resume_slug }}">Continue learning</a>
+    {% else %}
+    <a class="button button-small" href="/courses/{{ course.slug }}">Review course</a>
+    {% endif %}
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<p class="empty-state">You have not enrolled in a published course yet. <a href="/courses">Browse courses</a></p>
+{% endif %}
+<h2>Plan requests</h2>
+{% if orders %}
+<ul>
+  {% for order in orders %}
+  <li>{{ plans[order.plan].name }} — PKR {{ "{:,}".format(order.amount_pkr) }} — {{ order.status|replace("_", " ") }}</li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="empty-state">You have not requested a plan yet. <a href="/#pricing">View pricing</a></p>
+{% endif %}
+<h2>Delete account</h2>
+<form class="stack-form" method="post" action="/account/delete">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  {% if user.has_password %}
+  <label for="password">Current password</label>
+  <input id="password" name="password" type="password" autocomplete="current-password" required>
+  {% endif %}
+  <label for="confirm_delete">Type DELETE to confirm</label>
+  <input id="confirm_delete" name="confirm_delete" required>
+  <button class="button button-ghost" type="submit">Delete account</button>
+</form>
+{% endblock %}

@@ -1,0 +1,27 @@
+<header class="site-header">
+  <div class="header-bar">
+    {% include "partials/logo.html" %}
+    <nav id="site-nav" class="site-nav" aria-label="Primary">
+      <a href="/#home" {% if path == "/" %}data-section="home"{% endif %}>Home</a>
+      <a href="/#courses" {% if path.startswith("/courses") %}aria-current="page"{% elif path == "/" %}data-section="courses"{% endif %}>Courses</a>
+      <a href="/#pricing" {% if path == "/" %}data-section="pricing"{% endif %}>Pricing</a>
+      <a href="/#about" {% if path == "/" %}data-section="about"{% endif %}>About Us</a>
+      <a href="/#faq" {% if path == "/faq" %}aria-current="page"{% elif path == "/" %}data-section="faq"{% endif %}>FAQ</a>
+      <a href="/#chatroom" {% if path == "/chat" %}aria-current="page"{% elif path == "/" %}data-section="chatroom"{% endif %}>Chatroom</a>
+    </nav>
+    <div class="header-tools">
+      <p class="sys-status"><span class="sys-dot" aria-hidden="true"></span><span>Studio</span></p>
+      {% if user %}
+      {% if is_admin %}<a class="button button-ghost button-small" href="/admin">Admin</a>{% endif %}
+      <a class="neon-button header-cta" href="/account">Account</a>
+      <form method="post" action="/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}">
+        <button class="button button-ghost button-small" type="submit">Sign out</button>
+      </form>
+      {% else %}
+      <a class="neon-button header-cta" href="/signup">Join</a>
+      {% endif %}
+      <button class="menu-button" type="button" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    </div>
+  </div>
+</header>

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-intro">
+  <h1>Chatroom</h1>
+  <p>Verified members can share progress and ask questions. Your email is never shown. Messages are stored on this server and are not end-to-end encrypted. This page does not display a live member count.</p>
+</section>
+{% if not user %}
+<p class="empty-state">Sign in to read and join the community. You will return here afterward.</p>
+<div class="actions">
+  <a class="button" href="/login?next=/chat">Login</a>
+  <a class="button button-secondary" href="/signup?next=/chat">Sign Up</a>
+</div>
+{% elif not user.email_verified %}
+<p class="empty-state">Verify your email before the chat room opens. You can resend the link from your account page.</p>
+<a class="button" href="/account">Go to your account</a>
+{% else %}
+<div id="chat-log" class="chat-log" data-last-id="{{ messages[-1].id if messages else 0 }}" aria-live="polite">
+  {% if messages %}
+  {% for message in messages %}
+  <article class="chat-message" id="message-{{ message.id }}">
+    <h3>{{ message.display_name }}</h3>
+    <time datetime="{{ message.created_at }}">{{ message.created_at }}</time>
+    <p>{{ message.body }}</p>
+    {% if message.author_id != user.id %}
+    <form method="post" action="/chat/reports">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <input type="hidden" name="message_id" value="{{ message.id }}">
+      <label for="reason-{{ message.id }}">Report this message</label>
+      <input id="reason-{{ message.id }}" name="reason" minlength="10" maxlength="500" required>
+      <button class="button button-small" type="submit">Report</button>
+    </form>
+    {% endif %}
+  </article>
+  {% endfor %}
+  {% else %}
+  <p class="empty-note">No messages yet. Say hello to the community.</p>
+  {% endif %}
+</div>
+<p id="chat-status" role="status"></p>
+<form id="chat-form" method="post" action="/chat/messages">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <label for="body">Message</label>
+  <textarea id="body" name="body" maxlength="1000" required></textarea>
+  <button class="button" type="submit">Send</button>
+</form>
+{% endif %}
+{% endblock %}
+{% block scripts %}{% if can_read %}<script src="/static/js/chat.js"></script>{% endif %}{% endblock %}

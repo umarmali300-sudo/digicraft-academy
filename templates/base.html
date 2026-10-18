@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <meta name="description" content="{{ description }}">
+  <meta name="csrf-token" content="{{ csrf }}">
+  <meta name="theme-color" content="#000000">
+  <link rel="icon" href="/static/favicon.png?v=5" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:ital,wght@0,400;0,500;0,600;0,700;1,500;1,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/app.css?v=20261016-logo5">
+  <script src="/static/js/boot.js"></script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <div class="atmosphere" aria-hidden="true"></div>
+  <div class="shell">
+    <div class="shell-texture" aria-hidden="true">
+      <span class="glow glow-accent"></span>
+      <span class="glow glow-emerald"></span>
+    </div>
+    {% block body %}
+    {% include "partials/header.html" %}
+    <main id="content">
+      {% if flash %}<p class="flash" role="status">{{ flash }}</p>{% endif %}
+      {% block content %}{% endblock %}
+    </main>
+    {% include "partials/footer.html" %}
+    {% endblock %}
+  </div>
+  <script src="/static/js/app.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

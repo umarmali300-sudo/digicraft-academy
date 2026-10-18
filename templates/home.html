@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% from "partials/course_card.html" import course_card %}
+{% block content %}
+<section class="hero" id="home">
+  <div class="hero-copy">
+    <p class="mono-label">DC / 01 — Digital skills</p>
+    <h1>Build digital skills you can <em>practice immediately.</em></h1>
+    <p class="lede">Digicraft is a digital-skills academy with published courses, one-time plans, and a private chatroom for verified members. What you earn from a skill is not guaranteed.</p>
+    <div class="actions">
+      <a class="neon-button" href="/#courses">Explore Courses</a>
+      <a class="button button-secondary" href="/#pricing">View Pricing</a>
+    </div>
+  </div>
+  <aside class="hero-stage" aria-label="Preview of the learning interface. This is not a live assistant.">
+    <div class="glass hero-panel">
+      <p class="mono-label">Interface preview</p>
+      {% if snapshot %}
+      <article class="float-card glass mini-card">
+        <p class="mono-label">Your course</p>
+        <h2>{{ snapshot.course_title }}</h2>
+        <p>{% if snapshot.next_slug %}Next lesson: {{ snapshot.next_title }}{% else %}Every published lesson in this course is marked complete.{% endif %}</p>
+        <p class="progress-label"><span>{{ snapshot.completed }} of {{ snapshot.total }} lessons</span><span>{{ snapshot.percent }}%</span></p>
+        <div class="bar" role="img" aria-label="{{ snapshot.percent }} percent complete"><span style="width: {{ snapshot.percent }}%"></span></div>
+        <a class="button button-small" href="{% if snapshot.next_slug %}/courses/{{ snapshot.course_slug }}/lessons/{{ snapshot.next_slug }}{% else %}/courses/{{ snapshot.course_slug }}{% endif %}">Continue learning</a>
+      </article>
+      {% else %}
+      <article class="float-card glass mini-card">
+        <p class="mono-label">Course library</p>
+        <h2>Published courses</h2>
+        <p>Courses appear in the catalog only after they are published. This card is a layout preview.</p>
+      </article>
+      <article class="float-card accent-card mini-card float-delay">
+        <p class="mono-label">Saved progress</p>
+        <h2>Your account</h2>
+        <p>Completed lessons are stored after you enroll. This preview does not show another person's progress.</p>
+      </article>
+      {% endif %}
+      <span class="ai-cursor" aria-hidden="true">AI cursor</span>
+    </div>
+  </aside>
+</section>
+
+<section class="section" id="courses">
+  <div class="section-head">
+    <p class="mono-label">DC / 02 — Catalog</p>
+    <h2>Courses</h2>
+    <p>Search the courses that are published. Category and level filters appear when the catalog has those values.</p>
+  </div>
+  {% include "partials/course_filters.html" %}
+  {% if has_courses %}
+  {% if courses %}
+  <p class="mono-label result-count">{{ courses|length }} shown</p>
+  <div class="bento">
+    {% for course in courses %}
+    {{ course_card(course, loop.first, loop.index == 2 and courses|length > 2) }}
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty-state">No published courses match that search.</p>
+  {% endif %}
+  {% else %}
+  <p class="empty-state">New courses are being prepared. Check back soon.</p>
+  {% endif %}
+</section>
+
+<section class="section" id="pricing">
+  <div class="section-head">
+    <p class="mono-label">DC / 03 — Plans</p>
+    <h2>Pricing</h2>
+    <p>One-time prices in PKR. A request stays unpaid until Stripe confirms it.</p>
+    {% if payments_ready %}
+    <p>Checkout continues to Stripe. The plan is marked paid only after a verified webhook.</p>
+    {% else %}
+    <p>Stripe checkout is not configured, so these buttons save a plan request and do not take payment.</p>
+    {% endif %}
+  </div>
+  <div class="price-grid">
+    {% for plan in plans %}
+    <article class="price-card glass {% if plan.popular %}is-recommended{% endif %}">
+      {% if plan.popular %}<p class="badge">Recommended</p>{% endif %}
+      <h3>{{ plan.name }}</h3>
+      <p>{{ plan.blurb }}</p>
+      <p class="price">PKR {{ "{:,}".format(plan.price) }} <s>PKR {{ "{:,}".format(plan.original) }}</s></p>
+      <p class="mono-label">{{ plan.billing }} · {{ plan.discount }}</p>
+      <dl class="plan-scope">
+        <div><dt>Access</dt><dd>{{ plan.access }}</dd></div>
+        <div><dt>Support</dt><dd>{{ plan.support }}</dd></div>
+      </dl>
+      <ul>
+        {% for feature in plan.features %}<li>{{ feature }}</li>{% endfor %}
+      </ul>
+      <a class="{% if plan.popular %}neon-button{% else %}button button-secondary{% endif %}" href="/enroll?plan={{ plan.slug }}">Choose {{ plan.name }}</a>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="about-panel" id="about">
+  <div class="about-grid">
+    <div>
+      <p class="mono-label about-kicker">DC / 04 — Academy</p>
+      <h2>About Us</h2>
+      <p class="about-lead">Digicraft exists to teach practical digital skills in a clear sequence: a published course, a plan that matches it, and a place to ask questions.</p>
+      <p>Courses stay off the catalog until they are published. Plans are one-time prices, and access follows a confirmed payment rather than a saved request. Income from any skill you practice is not guaranteed.</p>
+      {% if team %}
+      <p>Consultation requests can be sent to {% for member in team %}{{ member.name }}{% if not loop.last %} or {% endif %}{% endfor %}. Their roles are on the <a href="/consultation">consultation page</a>.</p>
+      {% endif %}
+      <div class="actions">
+        <a class="neon-button" href="/#courses">Explore Courses</a>
+        <a class="button button-dark" href="/#pricing">View Pricing</a>
+      </div>
+    </div>
+    <div class="method-card">
+      <p class="mono-label">Teaching method</p>
+      <ol class="method-list">
+        {% for number, title, text in method %}
+        <li>
+          <span class="method-num">{{ number }}</span>
+          <div>
+            <h3>{{ title }}</h3>
+            <p>{{ text }}</p>
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="faq">
+  <div class="section-head">
+    <p class="mono-label">DC / 05 — Answers</p>
+    <h2>FAQ</h2>
+    <p>Answers match how the academy works today, including where a policy is not published.</p>
+  </div>
+  <div class="faq-list">
+    {% for question, answer in faqs %}
+    <details class="faq">
+      <summary>{{ question }}</summary>
+      <p>{{ answer }}</p>
+    </details>
+    {% endfor %}
+  </div>
+</section>
+
+{% if announcements %}
+<section class="section" id="announcements">
+  <div class="section-head">
+    <p class="mono-label">DC / Notices</p>
+    <h2>Academy announcements</h2>
+  </div>
+  {% for item in announcements %}
+  <article class="info-card">
+    <h3>{{ item.title }}</h3>
+    <p>{{ item.body }}</p>
+    <p class="meta">Saved {{ item.created_at }} by {{ item.display_name }}</p>
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="section" id="chatroom">
+  <div class="section-head">
+    <p class="mono-label">DC / 06 — Community</p>
+    <h2>Chatroom</h2>
+    <p>A private room for verified members. It lives on this site. This section does not show live messages or a member count.</p>
+  </div>
+  <div class="chat-entry glass">
+    <div>
+      <h3>How the room works</h3>
+      <ul class="rule-list">
+        <li>Sign in and verify your email before you can read or post.</li>
+        <li>Other members see your display name, not your email address.</li>
+        <li>Messages are stored on this server and are not end-to-end encrypted.</li>
+        <li>Spam, harassment, and sharing someone else's private information can be reported for review.</li>
+      </ul>
+    </div>
+    <div class="chat-action">
+      {% if not user %}
+      <p>You are signed out. The chatroom opens after you sign in with a verified email.</p>
+      <a class="neon-button" href="/login?next=/chat">Join Chatroom</a>
+      {% elif not user.email_verified %}
+      <p>Your email is not verified yet. The chatroom stays closed until you open the verification link.</p>
+      <a class="neon-button" href="/account">Verify email</a>
+      {% else %}
+      <p>You are signed in and verified. The chatroom shows messages stored for this academy, or an empty room if none exist.</p>
+      <a class="neon-button" href="/chat">Join Chatroom</a>
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endblock %}
