@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import hmac
+import logging
 import re
+import secrets
+import sqlite3
 import time
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.background import BackgroundTask
 
 from app.admin_panel import register_admin
 from app.config import ROOT, Settings
@@ -25,6 +29,8 @@ from app.content import (
     team_by_slug,
 )
 from app.db import Database
+from app.lesson_uploads import human_size
+from app.mega_service import MegaError, MegaService
 from app.google_oauth import GoogleOAuthError, authorization_url, exchange_code
 from app.mailer import MailError, send_email
 from app.payments import PaymentError, create_checkout, verify_webhook
@@ -83,9 +89,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="Digicraft", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings = settings
     app.state.db = Database(settings.database_path)
+    app.state.mega = MegaService.from_settings(settings)
     app.state.hub = Hub()
     app.state.limiter = RateLimiter()
     templates = Jinja2Templates(directory=str(ROOT / "templates"))
+    templates.env.filters["filesize"] = human_size
     app.state.templates = templates
     app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
 
@@ -399,14 +407,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         enrollment = db.enrollment(user["id"], course["id"])
         if not user["email_verified"] or not enrollment or enrollment["status"] != "active":
             return _denied(request, 403, "This file is available to enrolled members.")
-        match = next((item for item in db.lesson_files(lesson["id"]) if item["id"] == file_id), None)
+        match = db.get_lesson_file(lesson["id"], file_id)
         if not match or not re.fullmatch(r"[A-Za-z0-9._-]+", match["filename"]):
             return _denied(request, 404, "That file was not found.")
+        if match.get("storage") == "mega":
+            return _stream_mega_file(request, match)
         root = (settings.database_path.parent / "lesson_files" / str(lesson["id"])).resolve()
         path = (root / match["filename"]).resolve()
         if path.parent != root or not path.is_file():
             return _denied(request, 404, "That file was not found.")
         return FileResponse(path, filename=match["original_name"])
+
+    def _stream_mega_file(request: Request, match: dict):
+        """Stream a private MEGA file through this server. MEGA links and node ids never reach the browser."""
+        mega: MegaService = request.app.state.mega
+        node_id = match.get("mega_node_id")
+        if not node_id:
+            return _denied(request, 404, "That file was not found.")
+        if not mega.configured:
+            return _denied(request, 503, "File downloads are temporarily unavailable.")
+        try:
+            download = mega.open_download(node_id)
+        except MegaError as error:
+            logging.getLogger("digicraft.mega").warning("MEGA download failed (%s)", error.code)
+            status = 404 if error.code == "not_found" else 503
+            message = "That file was not found." if status == 404 else "This file is temporarily unavailable. Try again shortly."
+            return _denied(request, status, message)
+        name = match["original_name"]
+        fallback = re.sub(r"[^A-Za-z0-9._ -]", "_", name)
+        headers = {
+            "Content-Disposition": f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(name)}",
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        }
+        if match.get("size_bytes"):
+            headers["Content-Length"] = str(int(match["size_bytes"]))
+        return StreamingResponse(
+            download.chunks(),
+            media_type=match.get("content_type") or "application/octet-stream",
+            headers=headers,
+            background=BackgroundTask(download.close),
+        )
 
     @app.get("/faq")
     def faq(request: Request):
@@ -998,7 +1039,82 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             description="Review a Digicraft plan. No charge is made unless Stripe confirms payment.",
             plan=chosen,
             missing_payment=not settings.payments_ready,
+            easypaisa_receiving_number=settings.easypaisa_receiving_number,
         )
+
+    # EASYPAISA_ROUTE_MERGE_V1
+    @app.post("/enroll/easypaisa/order")
+    async def create_easypaisa_order(request: Request):
+        form = await form_data(request)
+        if not csrf_ok(request, form):
+            return redirect(request, "/#pricing", "The form expired. Try again.")
+        chosen = plan_by_slug(str(form.get("plan") or ""))
+        user = request.state.user
+        if not chosen or not user:
+            return redirect(request, "/login?next=/")
+        if not user["email_verified"]:
+            return redirect(request, "/account", "Verify your email before choosing a plan.")
+        if not settings.easypaisa_receiving_number:
+            return redirect(request, f"/enroll?plan={chosen['slug']}",
+                            "EasyPaisa manual payments are not configured yet.")
+        order = app.state.db.create_order(user["id"], chosen["slug"], chosen["price"])
+        return redirect(
+            request, f"/enroll/return?order_id={order['id']}",
+            "Order created. Send payment and submit your transaction ID and screenshot below.",
+        )
+
+    @app.post("/payments/easypaisa/{order_id}")
+    async def submit_easypaisa(request: Request, order_id: int):
+        form = await form_data(request)
+        user = request.state.user
+        if not user:
+            return redirect(request, "/login")
+        if not csrf_ok(request, form):
+            return redirect(request, f"/enroll/return?order_id={order_id}",
+                            "The form expired. Please try again.")
+        order = app.state.db.get_order(order_id)
+        if not order or order["user_id"] != user["id"]:
+            return app.state.denied(request, 404, "That order was not found.")
+        transaction_id = str(form.get("transaction_id") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{5,63}", transaction_id):
+            return redirect(request, f"/enroll/return?order_id={order_id}",
+                            "Enter a valid transaction ID (6–64 letters, numbers, dots, underscores, or hyphens).")
+        proof = form.get("proof")
+        if proof is None or not hasattr(proof, "read") or not getattr(proof, "filename", ""):
+            return redirect(request, f"/enroll/return?order_id={order_id}",
+                            "Upload a PNG or JPEG payment screenshot.")
+        data = await proof.read(5 * 1024 * 1024 + 1)
+        if not data or len(data) > 5 * 1024 * 1024:
+            return redirect(request, f"/enroll/return?order_id={order_id}",
+                            "Screenshot must be no larger than 5 MB.")
+        if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24 and data[12:16] == b"IHDR":
+            mime, extension = "image/png", ".png"
+        elif data.startswith(b"\xff\xd8\xff"):
+            mime, extension = "image/jpeg", ".jpg"
+        else:
+            return redirect(request, f"/enroll/return?order_id={order_id}",
+                            "The file contents are not a valid PNG or JPEG image.")
+        proof_dir = settings.database_path.parent / "payment_proofs"
+        proof_dir.mkdir(parents=True, exist_ok=True)
+        filename = secrets.token_hex(24) + extension
+        destination = proof_dir / filename
+        destination.write_bytes(data)
+        try:
+            app.state.db.submit_easypaisa(
+                order_id, user["id"], transaction_id, filename, mime
+            )
+        except sqlite3.IntegrityError:
+            destination.unlink(missing_ok=True)
+            return redirect(request, f"/enroll/return?order_id={order_id}",
+                            "That transaction ID has already been submitted, or this order already has a submission.")
+        except ValueError as exc:
+            destination.unlink(missing_ok=True)
+            return redirect(request, f"/enroll/return?order_id={order_id}", str(exc))
+        except Exception:
+            destination.unlink(missing_ok=True)
+            raise
+        return redirect(request, f"/enroll/return?order_id={order_id}",
+                        "EasyPaisa payment proof submitted for admin review.")
 
     @app.post("/enroll")
     async def create_enrollment_order(request: Request):
@@ -1038,6 +1154,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             description="The status of your Digicraft plan request.",
             order=order,
             plan=plan_by_slug(order["plan"]),
+            easypaisa_receiving_number=settings.easypaisa_receiving_number,
+            easypaisa_submission=app.state.db.easypaisa_for_user_order(order_id, user['id']),
         )
 
     @app.post("/payments/stripe/webhook")
@@ -1050,13 +1168,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except PaymentError:
             return JSONResponse({"error": "Invalid Stripe signature."}, status_code=400)
         if event.get("type") == "checkout.session.completed":
-            obj = event.get("data", {}).get("object", {})
+            obj = event.get("data", {}).get("object", {}) or {}
             if obj.get("payment_status") == "paid":
                 raw_id = (obj.get("metadata") or {}).get("order_id") or obj.get("client_reference_id") or 0
                 try:
-                    app.state.db.mark_order_paid(int(raw_id))
+                    order_id = int(raw_id)
                 except (TypeError, ValueError):
-                    pass
+                    order_id = 0
+                amount = obj.get("amount_total")
+                outcome = app.state.db.settle_paid_session(
+                    event_id=str(event.get("id") or ""),
+                    order_id=order_id,
+                    session_id=str(obj.get("id") or ""),
+                    amount_total=amount if isinstance(amount, int) else None,
+                    currency=obj.get("currency"),
+                    payment_intent=obj.get("payment_intent") if isinstance(obj.get("payment_intent"), str) else None,
+                )
+                if outcome == "session_unrecorded":
+                    return JSONResponse({"error": "Order not ready. Retry later."}, status_code=503)
+                if outcome not in {"paid", "duplicate", "already_paid"}:
+                    logging.getLogger("digicraft.payments").warning(
+                        "Stripe event %s for order %s was not applied: %s", event.get("id"), order_id, outcome
+                    )
         return {"received": True}
 
     @app.get("/resources")

@@ -8,5 +8,31 @@
 {% else %}
 <p>No payment has been confirmed. Returning to this page does not mark an order as paid.</p>
 {% endif %}
+{% if order.status != "paid" and not order.stripe_session_id and easypaisa_receiving_number %}
+<h2>EasyPaisa manual payment</h2>
+<p>Send <strong>PKR {{ "{:,}".format(order.amount_pkr) }}</strong> to
+<strong>{{ easypaisa_receiving_number }}</strong>.</p>
+{% if easypaisa_submission %}
+<p>Submission status: <strong>{{ easypaisa_submission.status|title }}</strong>.</p>
+<p>Transaction ID: {{ easypaisa_submission.transaction_id }}</p>
+{% if easypaisa_submission.status == "pending" %}
+<p>Your proof is awaiting admin review. Your plan is not active yet.</p>
+{% elif easypaisa_submission.status == "approved" %}
+<p>Your payment was approved. Your plan access has been updated.</p>
+{% else %}
+<p>Your payment was rejected. {{ easypaisa_submission.review_note or "Please contact support." }}</p>
+{% endif %}
+{% else %}
+<form method="post" action="/payments/easypaisa/{{ order.id }}" enctype="multipart/form-data">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <label for="transaction_id">EasyPaisa transaction ID</label>
+  <input id="transaction_id" name="transaction_id" required minlength="6" maxlength="64"
+         pattern="[A-Za-z0-9][A-Za-z0-9._-]{5,63}">
+  <label for="proof">Payment screenshot (PNG or JPEG, maximum 5 MB)</label>
+  <input id="proof" name="proof" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" required>
+  <button class="button" type="submit">Submit payment proof</button>
+</form>
+{% endif %}
+{% endif %}
 <a class="button" href="/account">View your account</a>
 {% endblock %}

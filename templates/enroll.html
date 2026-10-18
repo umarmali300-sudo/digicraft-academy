@@ -19,4 +19,17 @@
   <input type="hidden" name="plan" value="{{ plan.slug }}">
   <button class="button" type="submit">{% if missing_payment %}Save plan request{% else %}Continue to Stripe checkout{% endif %}</button>
 </form>
+<hr>
+<h2>Pay manually with EasyPaisa</h2>
+{% if easypaisa_receiving_number %}
+<p>Send <strong>PKR {{ "{:,}".format(plan.price) }}</strong> to EasyPaisa number
+<strong>{{ easypaisa_receiving_number }}</strong>. Access is granted only after an admin verifies the payment.</p>
+<form method="post" action="/enroll/easypaisa/order">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <input type="hidden" name="plan" value="{{ plan.slug }}">
+  <button class="button" type="submit">Create EasyPaisa payment order</button>
+</form>
+{% else %}
+<p>EasyPaisa manual payments are unavailable until the receiving number is configured.</p>
+{% endif %}
 {% endblock %}

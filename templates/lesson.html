@@ -15,7 +15,7 @@
 <h2>Downloads</h2>
 <ul>
   {% for file in files %}
-  <li><a href="/courses/{{ course.slug }}/lessons/{{ lesson.slug }}/files/{{ file.id }}">{{ file.original_name }} ({{ file.kind }})</a></li>
+  <li><a href="/courses/{{ course.slug }}/lessons/{{ lesson.slug }}/files/{{ file.id }}">{{ file.original_name }} ({{ file.kind }}{% if file.size_bytes %}, {{ file.size_bytes|filesize }}{% endif %})</a></li>
   {% endfor %}
 </ul>
 {% endif %}

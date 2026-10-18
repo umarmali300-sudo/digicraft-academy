@@ -5,3 +5,13 @@ __pycache__/
 .pytest_cache/
 *.pyc
 _backup_pre_theme_20261015/
+
+# Node.js dependencies
+node_modules/
+
+# Local MEGA test scripts
+mega-test.cjs
+mega-upload-test.cjs
+
+# Local backup files
+*.pre-mega.bak

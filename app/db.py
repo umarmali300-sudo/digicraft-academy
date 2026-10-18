@@ -4,7 +4,8 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from app.content import load_articles
+from app.content import PLAN_RANK, load_articles
+from app.migrations import backup_before_migrating, run_migrations
 from app.security import iso, new_token, utcnow
 
 
@@ -192,16 +193,36 @@ class Database:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self._lock = threading.Lock()
+        self._needs_backup = self._has_pending_migrations(path)
+        if self._needs_backup:
+            self.backup_path = backup_before_migrating(path)
+        else:
+            self.backup_path = None
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(SCHEMA)
             self._conn.execute("PRAGMA foreign_keys = ON")
-            self._ensure_column("users", "status", "TEXT NOT NULL DEFAULT 'active'")
-            self._ensure_column("chat_messages", "removed_at", "TEXT")
-            self._ensure_column("chat_messages", "removed_by", "INTEGER")
             self._conn.commit()
+            run_migrations(self._conn)
         self.sync_resources()
+
+    @staticmethod
+    def _has_pending_migrations(path: Path) -> bool:
+        """True when an existing database file has not yet recorded every migration."""
+        from app.migrations import MIGRATIONS
+
+        if not path.exists() or path.stat().st_size == 0:
+            return False
+        probe = sqlite3.connect(path)
+        try:
+            try:
+                done = {row[0] for row in probe.execute("SELECT version FROM schema_migrations")}
+            except sqlite3.OperationalError:
+                done = set()
+        finally:
+            probe.close()
+        return any(version not in done for version, _name, _step in MIGRATIONS)
 
     def _ensure_column(self, table: str, column: str, declaration: str) -> None:
         rows = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
@@ -471,8 +492,45 @@ class Database:
     def get_lesson_by_id(self, lesson_id: int) -> dict | None:
         return self._one("SELECT * FROM lessons WHERE id = ?", (lesson_id,))
 
+    _PUBLIC_FILE_COLUMNS = "id, lesson_id, kind, filename, original_name, storage, size_bytes, content_type, created_at"
+
     def lesson_files(self, lesson_id: int) -> list[dict]:
-        return self._all("SELECT * FROM lesson_files WHERE lesson_id = ? ORDER BY id", (lesson_id,))
+        """File rows safe to hand to templates: the private MEGA node id is deliberately not selected."""
+        return self._all(
+            f"SELECT {self._PUBLIC_FILE_COLUMNS} FROM lesson_files WHERE lesson_id = ? ORDER BY id",
+            (lesson_id,),
+        )
+
+    def get_lesson_file(self, lesson_id: int, file_id: int) -> dict | None:
+        """One file row including the private node id. Server-side use only."""
+        return self._one("SELECT * FROM lesson_files WHERE lesson_id = ? AND id = ?", (lesson_id, file_id))
+
+    def lesson_files_by_lesson(self) -> dict[int, list[dict]]:
+        grouped: dict[int, list[dict]] = {}
+        for row in self._all(f"SELECT {self._PUBLIC_FILE_COLUMNS} FROM lesson_files ORDER BY id"):
+            grouped.setdefault(row["lesson_id"], []).append(row)
+        return grouped
+
+    def add_lesson_file(
+        self,
+        *,
+        lesson_id: int,
+        kind: str,
+        filename: str,
+        original_name: str,
+        storage: str,
+        mega_node_id: str | None,
+        size_bytes: int,
+        content_type: str,
+        uploaded_by: int,
+    ) -> int:
+        return self._run(
+            """INSERT INTO lesson_files
+               (lesson_id, kind, filename, original_name, storage, mega_node_id, size_bytes,
+                content_type, uploaded_by, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (lesson_id, kind, filename, original_name, storage, mega_node_id, size_bytes, content_type, uploaded_by, iso()),
+        )
 
     def enrollment(self, user_id: int, course_id: int) -> dict | None:
         return self._one(
@@ -640,6 +698,61 @@ class Database:
         )
         return self.get_order(order_id)
 
+    def submit_easypaisa(self, order_id: int, user_id: int, transaction_id: str, proof_filename: str, proof_mime: str) -> dict:
+        now = iso()
+        with self._lock:
+            order = self._conn.execute("SELECT * FROM orders WHERE id=? AND user_id=?", (order_id, user_id)).fetchone()
+            if not order or order["status"] != "pending_payment" or order["stripe_session_id"]:
+                raise ValueError("This order is not eligible for EasyPaisa submission.")
+            self._conn.execute("INSERT INTO easypaisa_submissions(order_id,user_id,transaction_id,proof_filename,proof_mime,status,submitted_at) VALUES(?,?,?,?,?,'pending',?)", (order_id,user_id,transaction_id,proof_filename,proof_mime,now))
+            self._conn.commit()
+            row = self._conn.execute("SELECT * FROM easypaisa_submissions WHERE order_id=?", (order_id,)).fetchone()
+            return dict(row)
+
+    def easypaisa_for_user_order(self, order_id: int, user_id: int) -> dict | None:
+        return self._one("SELECT * FROM easypaisa_submissions WHERE order_id=? AND user_id=?", (order_id,user_id))
+
+    def easypaisa_submissions(self) -> list[dict]:
+        return self._all("SELECT p.*, o.plan, o.amount_pkr, o.status AS order_status, u.email, u.display_name FROM easypaisa_submissions p JOIN orders o ON o.id=p.order_id JOIN users u ON u.id=p.user_id ORDER BY CASE p.status WHEN 'pending' THEN 0 ELSE 1 END, p.submitted_at DESC")
+
+    def review_easypaisa(self, submission_id: int, reviewer_id: int, action: str, note: str = "") -> bool:
+        if action not in {"approve", "reject"}:
+            return False
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                sub = self._conn.execute("SELECT * FROM easypaisa_submissions WHERE id=?", (submission_id,)).fetchone()
+                if not sub or sub["status"] != "pending":
+                    self._conn.rollback(); return False
+                now = iso()
+                if action == "reject":
+                    self._conn.execute("UPDATE easypaisa_submissions SET status='rejected', reviewed_by=?, reviewed_at=?, review_note=? WHERE id=? AND status='pending'", (reviewer_id,now,note[:1000],submission_id))
+                    self._conn.commit(); return True
+                order = self._conn.execute("SELECT * FROM orders WHERE id=?", (sub["order_id"],)).fetchone()
+                if not order or order["user_id"] != sub["user_id"] or order["status"] != "pending_payment" or order["stripe_session_id"]:
+                    self._conn.rollback(); return False
+                from app.content import PLAN_RANK, plan_by_slug
+                selected_plan = plan_by_slug(order["plan"])
+                if not selected_plan or int(order["amount_pkr"]) != int(selected_plan["price"]):
+                    self._conn.rollback(); return False
+                user = self._conn.execute("SELECT plan FROM users WHERE id=?", (order["user_id"],)).fetchone()
+                current_plan = user["plan"] if user else None
+                best_plan = order["plan"] if PLAN_RANK.get(order["plan"], 0) > PLAN_RANK.get(current_plan, 0) else current_plan
+                self._conn.execute("UPDATE orders SET status='paid', updated_at=? WHERE id=? AND status='pending_payment' AND (stripe_session_id IS NULL OR stripe_session_id='')", (now,order["id"]))
+                if self._conn.execute("SELECT changes()").fetchone()[0] != 1:
+                    self._conn.rollback(); return False
+                self._conn.execute("UPDATE users SET plan=?, updated_at=? WHERE id=?", (best_plan,now,order["user_id"]))
+                courses = self._conn.execute("SELECT id FROM courses WHERE status='published' AND plan_required IN ('starter','pro','premium')").fetchall()
+                for course in courses:
+                    from app.content import PLAN_RANK
+                    if PLAN_RANK.get(self._conn.execute("SELECT plan_required FROM courses WHERE id=?", (course["id"],)).fetchone()[0], 99) <= PLAN_RANK.get(best_plan, 0):
+                        self._conn.execute("INSERT OR IGNORE INTO enrollments(user_id,course_id,status,created_at) VALUES(?,?, 'active',?)", (order["user_id"],course["id"],now))
+                self._conn.execute("UPDATE easypaisa_submissions SET status='approved', reviewed_by=?, reviewed_at=?, review_note=? WHERE id=? AND status='pending'", (reviewer_id,now,note[:1000],submission_id))
+                self._conn.commit(); return True
+            except Exception:
+                self._conn.rollback()
+                raise
+
     def get_order(self, order_id: int) -> dict | None:
         return self._one("SELECT * FROM orders WHERE id = ?", (order_id,))
 
@@ -649,16 +762,115 @@ class Database:
             (session_id, iso(), order_id),
         )
 
-    def mark_order_paid(self, order_id: int) -> dict | None:
-        order = self.get_order(order_id)
-        if not order or order["status"] == "paid":
-            return order
-        self._run(
-            "UPDATE orders SET status = 'paid', updated_at = ? WHERE id = ?",
-            (iso(), order_id),
+    def settle_paid_session(
+        self,
+        *,
+        event_id: str,
+        order_id: int,
+        session_id: str,
+        amount_total: int | None,
+        currency: str | None,
+        payment_intent: str | None = None,
+    ) -> str:
+        """Mark an order paid only if Stripe's verified data matches what we recorded.
+
+        Called from the signature-verified webhook only. Returns an outcome string:
+        ``paid``, ``duplicate``, ``already_paid``, ``order_not_found``, ``session_unrecorded``
+        (retryable: the checkout session id is not saved yet), ``session_mismatch``,
+        ``amount_mismatch`` or ``currency_mismatch``. Everything except ``session_unrecorded`` is
+        written to ``payment_events`` so each Stripe event is handled once. A mismatch never
+        activates a plan. A payment never downgrades a higher plan the user already holds.
+        """
+        now = iso()
+        with self._lock:
+            conn = self._conn
+            if event_id and conn.execute(
+                "SELECT 1 FROM payment_events WHERE event_id = ?", (event_id,)
+            ).fetchone():
+                return "duplicate"
+            row = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+            order = dict(row) if row else None
+
+            def record(outcome: str) -> str:
+                conn.execute(
+                    """INSERT OR IGNORE INTO payment_events
+                       (event_id, event_type, order_id, session_id, outcome, received_at)
+                       VALUES (?, 'checkout.session.completed', ?, ?, ?, ?)""",
+                    (event_id or f"noid-{order_id}-{now}", order_id or None, session_id or None, outcome, now),
+                )
+                conn.commit()
+                return outcome
+
+            if not order:
+                return record("order_not_found")
+            if order["status"] == "paid":
+                return record("already_paid")
+            if not order.get("stripe_session_id"):
+                return "session_unrecorded"
+            if not session_id or order["stripe_session_id"] != session_id:
+                return record("session_mismatch")
+            if (currency or "").lower() != "pkr":
+                return record("currency_mismatch")
+            if amount_total is None or int(amount_total) != int(order["amount_pkr"]) * 100:
+                return record("amount_mismatch")
+            conn.execute(
+                """UPDATE orders SET status = 'paid', currency = 'pkr', paid_at = ?,
+                          stripe_payment_intent = ?, updated_at = ? WHERE id = ?""",
+                (now, payment_intent, now, order_id),
+            )
+            user = conn.execute("SELECT plan FROM users WHERE id = ?", (order["user_id"],)).fetchone()
+            current_rank = PLAN_RANK.get((user["plan"] if user else None) or "", 0)
+            if PLAN_RANK.get(order["plan"], 0) > current_rank:
+                conn.execute(
+                    "UPDATE users SET plan = ?, updated_at = ? WHERE id = ?",
+                    (order["plan"], now, order["user_id"]),
+                )
+                current_rank = PLAN_RANK[order["plan"]]
+            # Enroll in published courses the plan covers. Existing enrollments (including ones an
+            # admin set to another status) are left exactly as they are.
+            covered = [name for name, rank in PLAN_RANK.items() if rank <= current_rank]
+            if user and covered:
+                marks = ",".join("?" for _ in covered)
+                conn.execute(
+                    f"""INSERT OR IGNORE INTO enrollments (user_id, course_id, status, created_at)
+                        SELECT ?, id, 'active', ? FROM courses
+                        WHERE status = 'published' AND plan_required IN ({marks})""",
+                    (order["user_id"], now, *covered),
+                )
+            return record("paid")
+
+    def admin_orders(self, status: str = "", query: str = "", limit: int = 300) -> list[dict]:
+        sql = """SELECT o.id, o.plan, o.amount_pkr, o.status, o.stripe_session_id, o.created_at,
+                        o.paid_at, o.anonymized_at,
+                        CASE WHEN o.anonymized_at IS NOT NULL THEN NULL ELSE u.display_name END AS display_name,
+                        CASE WHEN o.anonymized_at IS NOT NULL THEN NULL ELSE u.email END AS email
+                 FROM orders o LEFT JOIN users u ON u.id = o.user_id"""
+        where, params = [], []
+        if status:
+            where.append("o.status = ?")
+            params.append(status)
+        if query:
+            like = f"%{query.strip().lower()}%"
+            where.append("(lower(u.display_name) LIKE ? OR lower(u.email) LIKE ? OR CAST(o.id AS TEXT) = ?)")
+            params.extend([like, like, query.strip()])
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY o.id DESC LIMIT ?"
+        params.append(int(limit))
+        return self._all(sql, tuple(params))
+
+    def payment_summary(self) -> dict:
+        paid = self._one(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(amount_pkr), 0) AS total FROM orders WHERE status = 'paid'"
         )
-        self.update_user(order["user_id"], plan=order["plan"])
-        return self.get_order(order_id)
+        pending = self._one("SELECT COUNT(*) AS n FROM orders WHERE status = 'pending_payment'")["n"]
+        rejected = self._one(
+            "SELECT COUNT(*) AS n FROM payment_events WHERE outcome NOT IN ('paid', 'duplicate', 'already_paid')"
+        )["n"]
+        return {"paid_orders": paid["n"], "paid_total_pkr": paid["total"], "pending_orders": pending, "rejected_events": rejected}
+
+    def payment_events(self, limit: int = 100) -> list[dict]:
+        return self._all("SELECT * FROM payment_events ORDER BY id DESC LIMIT ?", (limit,))
 
     def user_learning(self, user_id: int, include_unpublished: bool = False) -> list[dict]:
         rows = self._all(
@@ -1020,7 +1232,12 @@ class Database:
         self._run("DELETE FROM lesson_progress WHERE user_id = ?", (user_id,))
         self._run("DELETE FROM enrollments WHERE user_id = ?", (user_id,))
         self._run("DELETE FROM email_tokens WHERE user_id = ?", (user_id,))
-        self._run("DELETE FROM orders WHERE user_id = ?", (user_id,))
+        # Unpaid requests hold no financial record. Paid orders are kept without the account link.
+        self._run("DELETE FROM orders WHERE user_id = ? AND status != 'paid'", (user_id,))
+        self._run(
+            "UPDATE orders SET user_id = 0, anonymized_at = ? WHERE user_id = ? AND status = 'paid'",
+            (iso(), user_id),
+        )
         self._run("DELETE FROM sessions WHERE user_id = ?", (user_id,))
         self._run("DELETE FROM consultations WHERE lower(email) = lower(?)", (email,))
         self._run("DELETE FROM users WHERE id = ?", (user_id,))

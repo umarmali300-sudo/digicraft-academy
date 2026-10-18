@@ -83,6 +83,18 @@ Optional:
 - `NEXORA_ADMIN_EMAILS` — comma-separated canonical Gmail addresses that can open `/moderation`
 - `NEXORA_TRUST_PROXY=1` only behind a trusted proxy
 
+## Database migrations and payment verification
+
+Schema changes after the base tables live in `app/migrations.py` as numbered, additive migrations recorded in `schema_migrations`. When an existing database has pending migrations, the site first copies it to `<db>.pre-migration-<timestamp>.bak` (never overwriting an earlier backup), then upgrades it in place.
+
+The Stripe webhook now marks an order paid only when the signature is valid, the checkout session id matches the one saved on the order, the amount equals the order price in paisa, and the currency is PKR. Each Stripe event is processed once (`payment_events`), a payment never lowers a higher plan, and rejected events are logged and kept for review. If a webhook arrives before the session id is saved, the site answers 503 so Stripe retries.
+
+## Orders, payments dashboard and account deletion
+
+- Admins get a **Payments** page at `/admin/payments` (search, status filter, summary, Stripe events that were rejected), plus `/api/admin/payments` and `/admin/payments.csv`. All three are admin-only on the server; CSV cells that start like a spreadsheet formula are neutralised.
+- When Stripe confirms a payment, the student is also enrolled in every published course covered by their plan. Existing enrollments, including ones an admin paused, are left unchanged.
+- Deleting an account removes unpaid plan requests but keeps paid orders without the account link (`user_id = 0`, `anonymized_at` set, no name or email shown), so payment records survive.
+
 ## Tests
 
 ```bash

@@ -4,11 +4,16 @@
 <nav class="admin-nav" aria-label="Admin">
   <a href="/admin" {% if section == "overview" %}aria-current="page"{% endif %}>Overview</a>
   <a href="/admin/students" {% if section == "students" or section == "student" %}aria-current="page"{% endif %}>Students</a>
-  <a href="/admin/courses" {% if section == "courses" %}aria-current="page"{% endif %}>Courses</a>
+  <a href="/admin/courses" {% if section == "courses" %}aria-current="page"{% endif %}>Courses &amp; Lessons</a>
+  <a href="/admin/members-progress" {% if section == "members_progress" %}aria-current="page"{% endif %}>Members Progress</a>
+  <a href="/admin/course-members" {% if section == "course_members" %}aria-current="page"{% endif %}>Course Members</a>
+  <a href="/admin/enrollments" {% if section == "enrollments" %}aria-current="page"{% endif %}>Enrollments</a>
   <a href="/admin/assignments" {% if section == "assignments" %}aria-current="page"{% endif %}>Assignments</a>
   <a href="/admin/submissions" {% if section == "submissions" %}aria-current="page"{% endif %}>Submissions and Grading</a>
   <a href="/admin/chat" {% if section == "chat" %}aria-current="page"{% endif %}>Chat Moderation</a>
   <a href="/admin/announcements" {% if section == "announcements" %}aria-current="page"{% endif %}>Announcements</a>
+  <a href="/admin/payments" {% if section == "payments" %}aria-current="page"{% endif %}>Payments</a>
+  <a href="/admin/easypaisa" {% if section == "easypaisa" %}aria-current="page"{% endif %}>EasyPaisa Reviews</a>
   <a href="/admin/reports" {% if section == "reports" %}aria-current="page"{% endif %}>Reports</a>
   <a href="/admin/settings" {% if section == "settings" %}aria-current="page"{% endif %}>Settings</a>
 </nav>
@@ -144,7 +149,54 @@
 {% endfor %}
 {% else %}<p>No courses are stored yet. Existing published courses stay in place when you add new ones.</p>{% endif %}
 <h2>Lessons</h2>
-{% if lessons %}<ul class="rule-list">{% for lesson in lessons %}<li>{{ lesson.course_title }} — {{ lesson.title }}</li>{% endfor %}</ul>{% else %}<p>No lessons are stored yet.</p>{% endif %}
+{% if lessons %}
+{% if not mega_ready %}<p class="empty-state">Private MEGA storage is not configured, so file uploads are switched off. Set MEGA_EMAIL and MEGA_PASSWORD on the server, then restart.</p>{% endif %}
+{% for lesson in lessons %}
+<article class="info-card">
+  <h3>{{ lesson.course_title }} — {{ lesson.title }}</h3>
+  {% set attached = files_by_lesson.get(lesson.id, []) %}
+  {% if attached %}
+  <ul class="rule-list">{% for f in attached %}<li>{{ f.original_name }} — {{ f.kind }}{% if f.size_bytes %}, {{ f.size_bytes|filesize }}{% endif %} — {% if f.storage == "mega" %}private cloud storage{% else %}server file{% endif %}</li>{% endfor %}</ul>
+  {% else %}<p>No files are attached to this lesson.</p>{% endif %}
+  {% if mega_ready %}
+  <form class="stack-form" method="post" action="/admin/lessons/{{ lesson.id }}/files" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label>Lesson file (PDF, MP4, M4V, MOV, WEBM or MKV)<input type="file" name="file" accept="{{ accept_files }}" required></label>
+    <button class="button button-secondary" type="submit">Upload to private storage</button>
+  </form>
+  {% endif %}
+</article>
+{% endfor %}
+{% else %}<p>No lessons are stored yet.</p>{% endif %}
+{% endif %}
+
+{% if section == "members_progress" %}
+<h2>Members Progress</h2>
+<form class="stack-form" method="get" action="/admin/members-progress">
+  <label for="progress-q">Search student name, email, or ID</label><input id="progress-q" name="q" value="{{ query }}">
+  <label for="progress-course">Course</label><select id="progress-course" name="course_id"><option value="0">All courses</option>{% for course in courses %}<option value="{{ course.id }}" {% if selected_course == course.id %}selected{% endif %}>{{ course.title }}</option>{% endfor %}</select>
+  <button class="button" type="submit">Filter progress</button>
+</form>
+{% if progress_rows %}<div class="table-wrap"><table><thead><tr><th>Student</th><th>Course</th><th>Enrollment</th><th>Completed lessons</th><th>Progress</th></tr></thead><tbody>
+{% for row in progress_rows %}<tr><td><a href="/admin/students/{{ row.user_id }}">{{ row.display_name }}</a><br>{{ row.email }} (ID {{ row.user_id }})</td><td>{{ row.course_title }}</td><td>{{ row.enrollment_status }}</td><td>{{ row.completed }} / {{ row.total }}</td><td>{{ row.percent }}%</td></tr>{% endfor %}
+</tbody></table></div>{% else %}<p>No enrollment progress matches these filters.</p>{% endif %}
+{% endif %}
+
+{% if section == "course_members" %}
+<h2>Course Members</h2>
+<form class="stack-form" method="get" action="/admin/course-members"><label for="members-course">Course</label><select id="members-course" name="course_id" required><option value="">Select a course</option>{% for course in courses %}<option value="{{ course.id }}" {% if selected_course == course.id %}selected{% endif %}>{{ course.title }}</option>{% endfor %}</select><label for="members-q">Search student name, email, or ID</label><input id="members-q" name="q" value="{{ query }}"><button class="button" type="submit">Show members</button></form>
+{% if selected_course %}{% if members %}<div class="table-wrap"><table><thead><tr><th>Student</th><th>Account</th><th>Enrollment</th><th>Action</th></tr></thead><tbody>
+{% for member in members %}<tr><td><a href="/admin/students/{{ member.user_id }}">{{ member.display_name }}</a><br>{{ member.email }} (ID {{ member.user_id }})</td><td>{{ member.account_status }}</td><td>{{ member.enrollment_status or "Not enrolled" }}</td><td><form method="post" action="/admin/enrollments" class="stack-form"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="user_id" value="{{ member.user_id }}"><input type="hidden" name="course_id" value="{{ selected_course }}"><select name="enrollment"><option value="active">Enroll / keep active</option><option value="withdrawn">Unenroll</option></select><button class="button button-secondary" type="submit">Save</button></form></td></tr>{% endfor %}
+</tbody></table></div>{% else %}<p>No students match this search.</p>{% endif %}{% endif %}
+{% endif %}
+
+{% if section == "enrollments" %}
+<h2>Enrollments</h2>
+<form class="stack-form" method="get" action="/admin/enrollments"><label for="enrollment-q">Search student or course</label><input id="enrollment-q" name="q" value="{{ query }}"><label for="enrollment-course-filter">Course filter</label><select id="enrollment-course-filter" name="course_id"><option value="0">All courses</option>{% for course in courses %}<option value="{{ course.id }}" {% if selected_course == course.id %}selected{% endif %}>{{ course.title }}</option>{% endfor %}</select><label for="enrollment-status">Status</label><select id="enrollment-status" name="status"><option value="">All statuses</option><option value="active" {% if selected_status == "active" %}selected{% endif %}>Active</option><option value="withdrawn" {% if selected_status == "withdrawn" %}selected{% endif %}>Withdrawn</option></select><button class="button" type="submit">Filter enrollments</button></form>
+<h3>Enroll a student</h3><form class="stack-form" method="post" action="/admin/enrollments"><input type="hidden" name="csrf_token" value="{{ csrf }}"><label for="enroll-user">Student</label><select id="enroll-user" name="user_id" required><option value="">Select student</option>{% for student in students_for_enrollment %}<option value="{{ student.id }}">{{ student.display_name }} — {{ student.email }} (ID {{ student.id }})</option>{% endfor %}</select><label for="enroll-course">Course</label><select id="enroll-course" name="course_id" required><option value="">Select course</option>{% for course in courses %}<option value="{{ course.id }}">{{ course.title }}</option>{% endfor %}</select><input type="hidden" name="enrollment" value="active"><button class="button" type="submit">Enroll student</button></form>
+{% if enrollment_rows %}<div class="table-wrap"><table><thead><tr><th>Student</th><th>Course</th><th>Status</th><th>Created</th><th>Change status</th></tr></thead><tbody>
+{% for row in enrollment_rows %}<tr><td><a href="/admin/students/{{ row.user_id }}">{{ row.display_name }}</a><br>{{ row.email }} (ID {{ row.user_id }})</td><td>{{ row.course_title }}</td><td>{{ row.enrollment_status }}</td><td>{{ row.enrolled_at }}</td><td><form method="post" action="/admin/enrollments" class="stack-form"><input type="hidden" name="csrf_token" value="{{ csrf }}"><input type="hidden" name="user_id" value="{{ row.user_id }}"><input type="hidden" name="course_id" value="{{ row.course_id }}"><select name="enrollment"><option value="active" {% if row.enrollment_status == "active" %}selected{% endif %}>Active</option><option value="withdrawn" {% if row.enrollment_status == "withdrawn" %}selected{% endif %}>Withdrawn</option></select><button class="button button-secondary" type="submit">Save</button></form></td></tr>{% endfor %}
+</tbody></table></div>{% else %}<p>No enrollments match these filters.</p>{% endif %}
 {% endif %}
 
 {% if section == "assignments" %}
@@ -268,6 +320,87 @@
 {% set peak = activity|map(attribute='events')|max %}
 <ul class="activity-bars">{% for row in activity %}<li><span>{{ row.day }}</span><span class="activity-meter" style="width: {{ (100 * row.events / peak)|round }}%"></span><span>{{ row.events }}</span></li>{% endfor %}</ul>
 {% else %}<p>No dated lesson or chat activity is stored.</p>{% endif %}
+{% endif %}
+
+{% if section == "payments" %}
+{% if not stripe_ready %}<p class="empty-state">Stripe is not fully configured, so no payment can be confirmed yet. Orders below are plan requests only.</p>{% endif %}
+<div class="stat-grid">
+  <article class="info-card"><p>Paid orders</p><strong>{{ summary.paid_orders }}</strong></article>
+  <article class="info-card"><p>Confirmed total (PKR)</p><strong>{{ "{:,}".format(summary.paid_total_pkr) }}</strong></article>
+  <article class="info-card"><p>Awaiting payment</p><strong>{{ summary.pending_orders }}</strong></article>
+  <article class="info-card"><p>Rejected Stripe events</p><strong>{{ summary.rejected_events }}</strong></article>
+</div>
+<p><a class="button" href="/admin/payments.csv">Export payments CSV</a></p>
+<form class="stack-form" method="get" action="/admin/payments">
+  <label for="pay-q">Search name, email, or order number</label>
+  <input id="pay-q" name="q" value="{{ query }}">
+  <label for="pay-status">Status</label>
+  <select id="pay-status" name="status">
+    <option value="">All</option>
+    {% for item in statuses %}<option value="{{ item }}" {% if item == status %}selected{% endif %}>{{ item|replace("_", " ") }}</option>{% endfor %}
+  </select>
+  <button class="button" type="submit">Filter</button>
+</form>
+{% if orders %}
+<div class="table-wrap"><table>
+  <thead><tr><th>Order</th><th>Student</th><th>Plan</th><th>Amount</th><th>Status</th><th>Created</th><th>Paid</th></tr></thead>
+  <tbody>{% for o in orders %}<tr><td>{{ o.id }}</td><td>{% if o.display_name %}{{ o.display_name }}<br><small>{{ o.email }}</small>{% else %}Deleted account{% endif %}</td><td>{{ o.plan }}</td><td>PKR {{ "{:,}".format(o.amount_pkr) }}</td><td>{{ o.status|replace("_", " ") }}</td><td>{{ o.created_at }}</td><td>{{ o.paid_at or "—" }}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% else %}<p>No orders match.</p>{% endif %}
+{% if events %}
+<h2>Stripe events that were not applied</h2>
+<p>These were signed by Stripe but did not match an order, so no plan was activated.</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>Event</th><th>Order</th><th>Reason</th><th>Received</th></tr></thead>
+  <tbody>{% for e in events %}<tr><td>{{ e.event_id }}</td><td>{{ e.order_id or "—" }}</td><td>{{ e.outcome|replace("_", " ") }}</td><td>{{ e.received_at }}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endif %}
+{% endif %}
+
+{% if section == "easypaisa" %}
+<h2>EasyPaisa payment reviews</h2>
+<p>Verify the transaction in the receiving account before approving. A screenshot alone is not proof that funds arrived.</p>
+{% if payments %}
+<div class="table-wrap"><table>
+  <thead>
+    <tr>
+      <th>Submission</th><th>Student</th><th>Order / Plan</th>
+      <th>Amount</th><th>Transaction ID</th><th>Proof</th>
+      <th>Status</th><th>Submitted</th><th>Review</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for p in payments %}
+    <tr>
+      <td>{{ p.id }}</td>
+      <td>{{ p.display_name or "Deleted account" }}<br><small>{{ p.email }}</small></td>
+      <td>#{{ p.order_id }} / {{ p.plan }}</td>
+      <td>PKR {{ "{:,}".format(p.amount_pkr) }}</td>
+      <td>{{ p.transaction_id }}</td>
+      <td><a href="/admin/easypaisa/{{ p.id }}/proof" target="_blank" rel="noopener noreferrer">View screenshot</a></td>
+      <td>{{ p.status|title }}</td>
+      <td>{{ p.submitted_at }}</td>
+      <td>
+      {% if p.status == "pending" %}
+        <form class="stack-form" method="post" action="/admin/easypaisa/{{ p.id }}/review">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <label for="review-note-{{ p.id }}">Review note (optional)</label>
+          <input id="review-note-{{ p.id }}" name="review_note" maxlength="1000">
+          <button class="button" type="submit" name="action" value="approve">Approve payment</button>
+          <button class="button" type="submit" name="action" value="reject">Reject payment</button>
+        </form>
+      {% else %}
+        {{ p.reviewed_at or "Reviewed" }}
+        {% if p.review_note %}<p>{{ p.review_note }}</p>{% endif %}
+      {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% else %}
+<p>No EasyPaisa submissions have been received.</p>
+{% endif %}
 {% endif %}
 
 {% if section == "settings" %}

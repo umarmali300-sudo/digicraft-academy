@@ -159,3 +159,26 @@ def test_announcement_report_and_suspension(tmp_path: Path):
         data={"csrf_token": csrf(client.get("/login").text), "email": "admin.test@gmail.com", "password": "Correcthorse1"},
     )
     assert "This account is suspended." in blocked.text
+
+
+def test_payments_routes_reject_students(tmp_path: Path):
+    client = client_for(tmp_path)
+    register_and_verify(client, tmp_path, email="learner.one@gmail.com", name="Learner One")
+    assert client.get("/admin/payments", follow_redirects=False).status_code == 303
+    assert client.get("/api/admin/payments").status_code == 403
+    assert client.get("/admin/payments.csv").status_code == 403
+
+
+def test_admin_payments_use_real_orders(tmp_path: Path):
+    client = client_for(tmp_path)
+    register_and_verify(client, tmp_path, email="admin.test@gmail.com", name="Ada Admin")
+    db = client.app.state.db
+    db.create_order(db.get_user_by_canonical("admintest@gmail.com")["id"], "pro", 5500)
+    page = client.get("/admin/payments")
+    assert page.status_code == 200
+    assert "Ada Admin" in page.text and "Stripe is not fully configured" in page.text
+    api = client.get("/api/admin/payments?status=pending_payment")
+    assert api.status_code == 200 and api.json()["orders"][0]["plan"] == "pro"
+    export = client.get("/admin/payments.csv")
+    assert export.headers["content-type"].startswith("text/csv")
+    assert "order_id,student,email,plan" in export.text

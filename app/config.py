@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import os
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(ROOT / '.env')
 
 
 def _flag(name: str, default: bool) -> bool:
@@ -38,10 +41,14 @@ class Settings:
     meet_url: str
     stripe_secret_key: str
     stripe_webhook_secret: str
+    easypaisa_receiving_number: str
     cookie_secure: bool
     form_min_seconds: int
     admin_emails: frozenset[str]
     trust_proxy: bool
+    mega_email: str = ""
+    mega_password: str = field(default="", repr=False)
+    node_bin: str = "node"
 
     @property
     def google_enabled(self) -> bool:
@@ -50,6 +57,10 @@ class Settings:
     @property
     def smtp_enabled(self) -> bool:
         return bool(self.smtp_host and self.smtp_from)
+
+    @property
+    def mega_ready(self) -> bool:
+        return bool(self.mega_email and self.mega_password)
 
     @property
     def payments_ready(self) -> bool:
@@ -98,10 +109,14 @@ class Settings:
             meet_url=os.environ.get("NEXORA_MEET_URL", "").strip(),
             stripe_secret_key=os.environ.get("STRIPE_SECRET_KEY", "").strip(),
             stripe_webhook_secret=os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip(),
+            easypaisa_receiving_number=os.environ.get("EASYPAISA_RECEIVING_NUMBER", "").strip(),
             cookie_secure=_flag("NEXORA_COOKIE_SECURE", base.startswith("https://")),
             form_min_seconds=int(os.environ.get("NEXORA_FORM_MIN_SECONDS", "2") or "2"),
             admin_emails=admins,
             trust_proxy=_flag("NEXORA_TRUST_PROXY", False),
+            mega_email=os.environ.get("MEGA_EMAIL", "").strip(),
+            mega_password=os.environ.get("MEGA_PASSWORD", ""),
+            node_bin=os.environ.get("NEXORA_NODE_BIN", "node").strip() or "node",
         )
 
     @classmethod
@@ -129,6 +144,7 @@ class Settings:
             meet_url="",
             stripe_secret_key="",
             stripe_webhook_secret="",
+            easypaisa_receiving_number="",
             cookie_secure=False,
             form_min_seconds=0,
             admin_emails=frozenset({"admin.test@gmail.com"}),

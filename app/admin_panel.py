@@ -3,18 +3,38 @@ from __future__ import annotations
 import csv
 import io
 import re
+import asyncio
+import logging
 import secrets
 from pathlib import Path
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 
+from app.lesson_uploads import (
+    ACCEPT_ATTRIBUTE,
+    MAX_VIDEO_BYTES,
+    UploadRejected,
+    clean_filename,
+    copy_to_temp,
+    folder_parts,
+    kind_and_type,
+    storage_name,
+)
+from app.mega_service import MegaError
 from app.security import is_configured_admin, iso, parse_iso
 
 ALLOWED_EXTENSIONS = {"pdf", "txt", "png", "jpg", "jpeg", "docx", "zip"}
 MAX_SUBMISSION_BYTES = 5_000_000
 LEVELS = {"Beginner", "Intermediate", "Advanced"}
 PLANS = {"starter", "pro", "premium"}
+ORDER_STATUSES = {"pending_payment", "paid"}
+
+
+def _csv_safe(value: str) -> str:
+    """Stop spreadsheet apps from running a cell that starts like a formula."""
+    text = str(value)
+    return "'" + text if text[:1] in ("=", "+", "-", "@", "\t", "\r") else text
 
 
 def register_admin(app) -> None:
@@ -104,7 +124,15 @@ def register_admin(app) -> None:
         if blocked:
             return blocked
         db = request.app.state.db
-        return render_admin(request, "courses", courses=db._all("SELECT * FROM courses ORDER BY title"), lessons=db._all("SELECT l.*, c.title AS course_title FROM lessons l JOIN courses c ON c.id = l.course_id ORDER BY c.title, l.position"))
+        return render_admin(
+            request,
+            "courses",
+            courses=db._all("SELECT * FROM courses ORDER BY title"),
+            lessons=db._all("SELECT l.*, c.title AS course_title FROM lessons l JOIN courses c ON c.id = l.course_id ORDER BY c.title, l.position"),
+            files_by_lesson=db.lesson_files_by_lesson(),
+            mega_ready=request.app.state.mega.configured,
+            accept_files=ACCEPT_ATTRIBUTE,
+        )
 
     @app.post("/admin/courses")
     async def save_course(request: Request):
@@ -163,6 +191,64 @@ def register_admin(app) -> None:
         request.app.state.db.save_lesson(course_id, title, slug, summary, body)
         return request.app.state.redirect(request, "/admin/courses", "Lesson saved.")
 
+    @app.post("/admin/lessons/{lesson_id}/files")
+    async def upload_lesson_file(request: Request, lesson_id: int):
+        blocked = page_guard(request)
+        if blocked:
+            return blocked
+        state = request.app.state
+        back = "/admin/courses"
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > MAX_VIDEO_BYTES + 1_048_576:
+            return state.redirect(request, back, "That file is too large to upload.")
+        form = await state.form_data(request)
+        temp_path = None
+        try:
+            if not state.csrf_ok(request, form):
+                return state.redirect(request, back, "The form expired. Try again.")
+            lesson = state.db._one(
+                """SELECT l.id, l.slug, l.course_id, c.slug AS course_slug
+                   FROM lessons l JOIN courses c ON c.id = l.course_id WHERE l.id = ?""",
+                (lesson_id,),
+            )
+            if not lesson:
+                return state.denied(request, 404, "That lesson was not found.")
+            upload = form.get("file")
+            if not hasattr(upload, "read") or not hasattr(upload, "filename"):
+                return state.redirect(request, back, "Choose a file to upload.")
+            try:
+                display_name, ext = clean_filename(upload.filename)
+                kind, content_type = kind_and_type(ext)
+                temp_path, size = await asyncio.to_thread(copy_to_temp, upload.file, ext)
+            except UploadRejected as error:
+                return state.redirect(request, back, str(error))
+            mega = state.mega
+            if not mega.configured:
+                return state.redirect(request, back, "MEGA storage is not configured. Set MEGA_EMAIL and MEGA_PASSWORD, then restart.")
+            stored = storage_name(ext)
+            folders = folder_parts({"id": lesson["course_id"], "slug": lesson["course_slug"]}, lesson)
+            try:
+                node_id = await asyncio.to_thread(mega.upload, temp_path, folders, stored, size)
+            except MegaError as error:
+                logging.getLogger("digicraft.mega").warning("MEGA upload failed (%s)", error.code)
+                return state.redirect(request, back, str(error))
+            state.db.add_lesson_file(
+                lesson_id=lesson["id"],
+                kind=kind,
+                filename=stored,
+                original_name=display_name,
+                storage="mega",
+                mega_node_id=node_id,
+                size_bytes=size,
+                content_type=content_type,
+                uploaded_by=request.state.user["id"],
+            )
+            return state.redirect(request, back, f"{display_name} was uploaded to private storage.")
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
+            await form.close()
+
     @app.post("/admin/courses/{course_id}/enroll")
     async def enroll(request: Request, course_id: int):
         blocked = page_guard(request)
@@ -182,6 +268,103 @@ def register_admin(app) -> None:
             return request.app.state.denied(request, 404, "That course was not found.")
         request.app.state.db.set_enrollment(user_id, course_id, action)
         return request.app.state.redirect(request, f"/admin/students/{user_id}", "Enrollment saved.")
+
+    @app.get("/admin/members-progress")
+    def members_progress(request: Request, q: str = "", course_id: int = 0):
+        blocked = page_guard(request)
+        if blocked:
+            return blocked
+        db = request.app.state.db
+        courses = db._all("SELECT id, title FROM courses ORDER BY title")
+        query = q.strip()
+        needle = f"%{query}%"
+        rows = db._all(
+            """SELECT u.id AS user_id, u.display_name, u.email, c.id AS course_id,
+                      c.title AS course_title, e.status AS enrollment_status,
+                      COUNT(DISTINCT l.id) AS total,
+                      COUNT(DISTINCT CASE WHEN p.completed = 1 THEN l.id END) AS completed
+               FROM enrollments e JOIN users u ON u.id=e.user_id JOIN courses c ON c.id=e.course_id
+               LEFT JOIN lessons l ON l.course_id=c.id
+               LEFT JOIN lesson_progress p ON p.lesson_id=l.id AND p.user_id=u.id
+               WHERE (?=0 OR c.id=?) AND (?='' OR u.display_name LIKE ? OR u.email LIKE ? OR CAST(u.id AS TEXT)=?)
+               GROUP BY u.id,u.display_name,u.email,c.id,c.title,e.status
+               ORDER BY u.display_name COLLATE NOCASE,c.title""",
+            (course_id, course_id, query, needle, needle, query),
+        )
+        for row in rows:
+            row['total'] = row['total'] or 0
+            row['completed'] = row['completed'] or 0
+            row['percent'] = round(100 * row['completed'] / row['total']) if row['total'] else 0
+        return render_admin(request, "members_progress", progress_rows=rows, courses=courses, query=query, selected_course=course_id)
+
+    @app.get("/admin/course-members")
+    def course_members(request: Request, course_id: int = 0, q: str = ""):
+        blocked = page_guard(request)
+        if blocked:
+            return blocked
+        db = request.app.state.db
+        courses = db._all("SELECT id, title FROM courses ORDER BY title")
+        query = q.strip()
+        members = []
+        if course_id and db._one("SELECT id FROM courses WHERE id=?", (course_id,)):
+            needle = f"%{query}%"
+            members = db._all(
+                """SELECT u.id AS user_id,u.display_name,u.email,u.status AS account_status,
+                          e.status AS enrollment_status
+                   FROM users u LEFT JOIN enrollments e ON e.user_id=u.id AND e.course_id=?
+                   WHERE (?='' OR u.display_name LIKE ? OR u.email LIKE ? OR CAST(u.id AS TEXT)=?)
+                   ORDER BY CASE WHEN e.status='active' THEN 0 WHEN e.status='withdrawn' THEN 1 ELSE 2 END,
+                            u.display_name COLLATE NOCASE""",
+                (course_id, query, needle, needle, query),
+            )
+        return render_admin(request, "course_members", courses=courses, members=members, selected_course=course_id, query=query)
+
+    @app.get("/admin/enrollments")
+    def enrollments(request: Request, q: str = "", course_id: int = 0, status: str = ""):
+        blocked = page_guard(request)
+        if blocked:
+            return blocked
+        db = request.app.state.db
+        courses = db._all("SELECT id,title FROM courses ORDER BY title")
+        students = db._all("SELECT id,display_name,email FROM users WHERE status='active' ORDER BY display_name COLLATE NOCASE")
+        query = q.strip()
+        if status not in {"", "active", "withdrawn"}:
+            status = ""
+        needle = f"%{query}%"
+        rows = db._all(
+            """SELECT e.user_id,e.course_id,e.status AS enrollment_status,e.created_at AS enrolled_at,
+                      u.display_name,u.email,c.title AS course_title
+               FROM enrollments e JOIN users u ON u.id=e.user_id JOIN courses c ON c.id=e.course_id
+               WHERE (?=0 OR c.id=?) AND (?='' OR e.status=?)
+                 AND (?='' OR u.display_name LIKE ? OR u.email LIKE ? OR c.title LIKE ? OR CAST(u.id AS TEXT)=?)
+               ORDER BY e.created_at DESC,c.title,u.display_name""",
+            (course_id, course_id, status, status, query, needle, needle, needle, query),
+        )
+        return render_admin(request, "enrollments", courses=courses, students_for_enrollment=students, enrollment_rows=rows, query=query, selected_course=course_id, selected_status=status)
+
+    @app.post("/admin/enrollments")
+    async def save_enrollment(request: Request):
+        blocked = page_guard(request)
+        if blocked:
+            return blocked
+        form = await request.app.state.form_data(request)
+        if not request.app.state.csrf_ok(request, form):
+            return request.app.state.redirect(request, "/admin/enrollments", "The form expired. Try again.")
+        try:
+            user_id = int(form.get("user_id") or 0)
+            course_id = int(form.get("course_id") or 0)
+        except (TypeError, ValueError):
+            return request.app.state.redirect(request, "/admin/enrollments", "Choose a valid student and course.")
+        status = str(form.get("enrollment") or "")
+        db = request.app.state.db
+        if status not in {"active", "withdrawn"}:
+            return request.app.state.redirect(request, "/admin/enrollments", "Choose Enroll or Unenroll.")
+        if not db.student_profile(user_id):
+            return request.app.state.redirect(request, "/admin/enrollments", "That student was not found.")
+        if not db._one("SELECT id FROM courses WHERE id=?", (course_id,)):
+            return request.app.state.redirect(request, "/admin/enrollments", "That course was not found.")
+        db.set_enrollment(user_id, course_id, status)
+        return request.app.state.redirect(request, f"/admin/enrollments?course_id={course_id}", "Enrollment saved.")
 
     @app.get("/admin/assignments")
     def assignments(request: Request):
@@ -350,6 +533,150 @@ def register_admin(app) -> None:
         for row in request.app.state.db.course_progress_report():
             writer.writerow([row["course"], row["student"], row["completed"], row["lessons"]])
         return Response(buffer.getvalue(), media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="course-progress.csv"'})
+
+    @app.get("/admin/payments")
+    def payments(request: Request, status: str = "", q: str = ""):
+        blocked = page_guard(request)
+        if blocked:
+            return blocked
+        db = request.app.state.db
+        status = status if status in ORDER_STATUSES else ""
+        return render_admin(
+            request,
+            "payments",
+            orders=db.admin_orders(status, q[:80]),
+            summary=db.payment_summary(),
+            events=[e for e in db.payment_events(50) if e["outcome"] not in {"paid", "duplicate", "already_paid"}],
+            status=status,
+            query=q[:80],
+            statuses=sorted(ORDER_STATUSES),
+            stripe_ready=request.app.state.settings.payments_ready,
+        )
+
+    @app.get("/api/admin/payments")
+    def payments_api(request: Request, status: str = "", q: str = ""):
+        blocked = api_guard(request)
+        if blocked:
+            return blocked
+        db = request.app.state.db
+        status = status if status in ORDER_STATUSES else ""
+        return {"orders": db.admin_orders(status, q[:80]), "summary": db.payment_summary()}
+
+    @app.get("/admin/payments.csv")
+    def payments_csv(request: Request):
+        blocked = api_guard(request)
+        if blocked:
+            return blocked
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["order_id", "student", "email", "plan", "amount_pkr", "status", "created_at", "paid_at"])
+        for row in request.app.state.db.admin_orders(limit=5000):
+            writer.writerow(
+                [
+                    row["id"],
+                    _csv_safe(row["display_name"] or "Deleted account"),
+                    _csv_safe(row["email"] or ""),
+                    row["plan"],
+                    row["amount_pkr"],
+                    row["status"],
+                    row["created_at"],
+                    row["paid_at"] or "",
+                ]
+            )
+        return Response(buffer.getvalue(), media_type="text/csv", headers={"Content-Disposition": 'attachment; filename="payments.csv"'})
+
+    @app.get("/admin/easypaisa")
+    def easypaisa_admin(request: Request):
+        blocked = page_guard(request)
+        if blocked:
+            return blocked
+        return render_admin(
+            request,
+            "easypaisa",
+            payments=request.app.state.db.easypaisa_submissions(),
+        )
+
+    @app.post("/admin/easypaisa/{submission_id}/review")
+    async def review_easypaisa_admin(request: Request, submission_id: int):
+        blocked = page_guard(request)
+        if blocked:
+            return blocked
+
+        form = await request.app.state.form_data(request)
+        if not request.app.state.csrf_ok(request, form):
+            return request.app.state.redirect(
+                request, "/admin/easypaisa", "The form expired. Please try again."
+            )
+
+        action = str(form.get("action") or "").strip().lower()
+        note = str(form.get("review_note") or "").strip()[:1000]
+        if action not in {"approve", "reject"}:
+            return request.app.state.redirect(
+                request, "/admin/easypaisa", "Invalid review action."
+            )
+
+        reviewer = request.state.user
+        try:
+            changed = request.app.state.db.review_easypaisa(
+                submission_id, reviewer["id"], action, note
+            )
+        except Exception:
+            logging.exception("EasyPaisa review failed for submission %s", submission_id)
+            return request.app.state.redirect(
+                request, "/admin/easypaisa",
+                "Review could not be completed because of an internal error."
+            )
+
+        if not changed:
+            return request.app.state.redirect(
+                request, "/admin/easypaisa",
+                "Submission was already reviewed or its order is no longer eligible."
+            )
+
+        message = (
+            "Payment approved and plan access updated."
+            if action == "approve"
+            else "Payment submission rejected."
+        )
+        return request.app.state.redirect(request, "/admin/easypaisa", message)
+
+    @app.get("/admin/easypaisa/{submission_id}/proof")
+    def easypaisa_proof(request: Request, submission_id: int):
+        blocked = page_guard(request)
+        if blocked:
+            return blocked
+
+        db = request.app.state.db
+        row = db._one(
+            "SELECT proof_filename, proof_mime FROM easypaisa_submissions WHERE id=?",
+            (submission_id,),
+        )
+        if not row or row["proof_mime"] not in {"image/png", "image/jpeg"}:
+            return request.app.state.denied(request, 404, "Payment proof not found.")
+
+        filename = row["proof_filename"] or ""
+        if not re.fullmatch(r"[a-f0-9]{48}\.(?:png|jpg)", filename):
+            return request.app.state.denied(request, 404, "Payment proof not found.")
+
+        settings = request.app.state.settings
+        proof_dir = (settings.database_path.parent / "payment_proofs").resolve()
+        proof_path = (proof_dir / filename).resolve()
+        if proof_path.parent != proof_dir or not proof_path.is_file():
+            return request.app.state.denied(request, 404, "Payment proof not found.")
+
+        expected_ext = ".png" if row["proof_mime"] == "image/png" else ".jpg"
+        if proof_path.suffix != expected_ext:
+            return request.app.state.denied(request, 404, "Payment proof not found.")
+
+        return Response(
+            proof_path.read_bytes(),
+            media_type=row["proof_mime"],
+            headers={
+                "Cache-Control": "no-store, private",
+                "X-Content-Type-Options": "nosniff",
+                "Content-Disposition": "inline",
+            },
+        )
 
     @app.get("/admin/settings")
     def settings_page(request: Request):

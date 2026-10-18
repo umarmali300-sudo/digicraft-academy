@@ -264,23 +264,63 @@ def test_password_reset_and_google_setup(tmp_path):
     assert "No account was created" in google.text
 
 
+def _signed(secret: str, event: dict) -> tuple[bytes, dict]:
+    payload = json.dumps(event).encode()
+    stamp = str(int(time.time()))
+    signature = hmac.new(secret.encode(), f"{stamp}.".encode() + payload, hashlib.sha256).hexdigest()
+    return payload, {"stripe-signature": f"t={stamp},v1={signature}"}
+
+
+def _paid_event(order_id: int, session_id: str, amount_total: int, currency: str = "pkr", event_id: str = "evt_1") -> dict:
+    return {
+        "id": event_id,
+        "type": "checkout.session.completed",
+        "data": {
+            "object": {
+                "id": session_id,
+                "payment_status": "paid",
+                "amount_total": amount_total,
+                "currency": currency,
+                "metadata": {"order_id": str(order_id)},
+            }
+        },
+    }
+
+
 def test_stripe_webhook_marks_only_signed_payment(tmp_path):
     secret = "whsec_test_secret"
     client = client_for(tmp_path, stripe_secret_key="sk_test", stripe_webhook_secret=secret)
     register_and_verify(client, tmp_path, email="stripe.user@gmail.com", name="Stripe User")
-    user = client.app.state.db.get_user_by_canonical("stripeuser@gmail.com")
-    order = client.app.state.db.create_order(user["id"], "starter", 2700)
+    db = client.app.state.db
+    user = db.get_user_by_canonical("stripeuser@gmail.com")
+    order = db.create_order(user["id"], "starter", 2700)
+    db.set_order_session(order["id"], "cs_test_1")
     unsigned = client.post("/payments/stripe/webhook", content=b"{}", headers={"stripe-signature": "t=1,v1=bad"})
     assert unsigned.status_code == 400
-    payload = json.dumps(
-        {"type": "checkout.session.completed", "data": {"object": {"payment_status": "paid", "metadata": {"order_id": str(order["id"])}}}}
-    ).encode()
-    stamp = str(int(time.time()))
-    signature = hmac.new(secret.encode(), f"{stamp}.".encode() + payload, hashlib.sha256).hexdigest()
-    paid = client.post("/payments/stripe/webhook", content=payload, headers={"stripe-signature": f"t={stamp},v1={signature}"})
+    payload, headers = _signed(secret, _paid_event(order["id"], "cs_test_1", 270000))
+    paid = client.post("/payments/stripe/webhook", content=payload, headers=headers)
     assert paid.status_code == 200
-    assert client.app.state.db.get_order(order["id"])["status"] == "paid"
-    assert client.app.state.db.get_user(user["id"])["plan"] == "starter"
+    assert db.get_order(order["id"])["status"] == "paid"
+    assert db.get_user(user["id"])["plan"] == "starter"
+
+
+def test_stripe_webhook_rejects_wrong_amount_or_session(tmp_path):
+    secret = "whsec_test_secret"
+    client = client_for(tmp_path, stripe_secret_key="sk_test", stripe_webhook_secret=secret)
+    register_and_verify(client, tmp_path, email="stripe.two@gmail.com", name="Stripe Two")
+    db = client.app.state.db
+    user = db.get_user_by_canonical("stripetwo@gmail.com")
+    order = db.create_order(user["id"], "pro", 5500)
+    db.set_order_session(order["id"], "cs_test_2")
+    for event in (
+        _paid_event(order["id"], "cs_test_2", 100, event_id="evt_low"),
+        _paid_event(order["id"], "cs_other", 550000, event_id="evt_session"),
+        _paid_event(order["id"], "cs_test_2", 550000, currency="usd", event_id="evt_currency"),
+    ):
+        payload, headers = _signed(secret, event)
+        assert client.post("/payments/stripe/webhook", content=payload, headers=headers).status_code == 200
+    assert db.get_order(order["id"])["status"] == "pending_payment"
+    assert db.get_user(user["id"])["plan"] in (None, "")
 
 
 def test_open_redirect_is_blocked(tmp_path):
